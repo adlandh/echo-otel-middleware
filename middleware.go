@@ -13,7 +13,6 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-const defaultComponentName = "echo/v4"
 const (
 	tracerKey  = "echo-otel-middleware"
 	tracerName = "github.com/adlandh/echo-otel-middleware"
@@ -30,9 +29,6 @@ type (
 
 		// OpenTelemetry Propagator
 		Propagator propagation.TextMapPropagator
-
-		// ComponentName used for describing the tracing component name
-		ComponentName string
 
 		// add req headers & resp headers to tracing tags
 		AreHeadersDump bool
@@ -53,7 +49,6 @@ var (
 	// DefaultTraceConfig is the default Trace middleware config.
 	DefaultOtelConfig = OtelConfig{
 		Skipper:        middleware.DefaultSkipper,
-		ComponentName:  defaultComponentName,
 		AreHeadersDump: true,
 		IsBodyDump:     false,
 		LimitHTTPBody:  true,
@@ -79,10 +74,6 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 
 	if config.Skipper == nil {
 		config.Skipper = middleware.DefaultSkipper
-	}
-
-	if config.ComponentName == "" {
-		config.ComponentName = defaultComponentName
 	}
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
