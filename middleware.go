@@ -19,7 +19,7 @@ const (
 )
 
 type (
-	// TraceConfig defines the config for Trace middleware.
+	// OtelConfig defines the config for OpenTelemetry middleware.
 	OtelConfig struct {
 		// Skipper defines a function to skip middleware.
 		Skipper middleware.Skipper
@@ -46,7 +46,7 @@ type (
 )
 
 var (
-	// DefaultTraceConfig is the default Trace middleware config.
+	// DefaultOtelConfig is the default OpenTelemetry middleware config.
 	DefaultOtelConfig = OtelConfig{
 		Skipper:        middleware.DefaultSkipper,
 		AreHeadersDump: true,
