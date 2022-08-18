@@ -112,7 +112,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 
 			//Add path parameters
 			for _, paramName := range c.ParamNames() {
-				oteltrace.WithAttributes(attribute.String("http.path."+paramName, c.Param(paramName)))
+				sp.SetAttributes(attribute.String("http.path."+paramName, c.Param(paramName)))
 			}
 
 			//Dump request headers
