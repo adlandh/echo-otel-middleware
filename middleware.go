@@ -2,7 +2,7 @@ package echo_otel_middleware
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -56,7 +56,7 @@ var (
 	}
 )
 
-//Middleware returns a OpenTelemetry middleware with default config
+// Middleware returns a OpenTelemetry middleware with default config
 func Middleware() echo.MiddlewareFunc {
 	return MiddlewareWithConfig(DefaultOtelConfig)
 }
@@ -110,6 +110,11 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			ctx, sp = tracer.Start(ctx, opname, opts...)
 			defer sp.End()
 
+			//Add path parameters
+			for _, paramName := range c.ParamNames() {
+				oteltrace.WithAttributes(attribute.String("http.path."+paramName, c.Param(paramName)))
+			}
+
 			//Dump request headers
 			if config.AreHeadersDump {
 				for k := range request.Header {
@@ -123,7 +128,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 				// request
 				reqBody := []byte{}
 				if c.Request().Body != nil {
-					reqBody, _ = ioutil.ReadAll(c.Request().Body)
+					reqBody, _ = io.ReadAll(c.Request().Body)
 
 					if config.LimitHTTPBody {
 						sp.SetAttributes(attribute.String("http.req.body", limitString(string(reqBody), config.LimitSize)))
@@ -132,7 +137,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 					}
 				}
 
-				request.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
+				request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
 
 				// response
 				respDumper = newResponseDumper(c.Response())
