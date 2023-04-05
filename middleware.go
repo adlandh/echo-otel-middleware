@@ -125,7 +125,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			var respDumper *responseDumper
 			if config.IsBodyDump {
 				// request
-				reqBody := []byte{}
+				var reqBody []byte
 				if c.Request().Body != nil {
 					reqBody, _ = io.ReadAll(c.Request().Body)
 
