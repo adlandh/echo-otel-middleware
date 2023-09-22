@@ -3,16 +3,30 @@ package echo_otel_middleware
 import (
 	"crypto/rand"
 	"fmt"
+	"strings"
 
 	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
-func limitString(str string, size int) string {
-	if len(str) > size {
-		return str[:size/2] + "\n---- skipped ----\n" + str[len(str)-size/2:]
+func prepareTagValue(str string, size int, removeNewLine bool) string {
+	if removeNewLine {
+		str = strings.Replace(str, "\n", " ", -1) // no \n ib strings
+	}
+	if size <= 0 || size >= len(str) {
+		return str
 	}
 
-	return str
+	return str[:size-3] + "..."
+}
+
+func prepareTagName(str string, size int) string {
+	if size <= 0 || size >= len(str) {
+		return str
+	}
+
+	return str[:size]
 }
 
 func getRequestID(ctx echo.Context) string {
@@ -27,4 +41,13 @@ func generateToken() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%x", b)
+}
+
+func setAttr(span trace.Span, config OtelConfig, tag, value string) {
+	if tag == "" || value == "" {
+		return
+	}
+
+	span.SetAttributes(attribute.String(prepareTagName(tag, config.LimitNameSize),
+		prepareTagValue(value, config.LimitValueSize, config.RemoveNewLines)))
 }

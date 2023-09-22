@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_limitString(t *testing.T) {
+func Test_prepareTagName(t *testing.T) {
 	type args struct {
 		str  string
 		size int
@@ -34,19 +34,61 @@ func Test_limitString(t *testing.T) {
 				str:  "05Kj7z2AXCl603gMJu6B23z2sD",
 				size: 10,
 			},
-			want: "05Kj7\n---- skipped ----\n3z2sD",
+			want: "05Kj7z2AXC",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, limitString(tt.args.str, tt.args.size))
+			require.Equal(t, tt.want, prepareTagName(tt.args.str, tt.args.size))
+		})
+	}
+}
+
+func Test_prepareTagValue(t *testing.T) {
+	type args struct {
+		str  string
+		size int
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "Short string - large limit",
+			args: args{
+				str:  "05Kj7",
+				size: 100,
+			},
+			want: "05Kj7",
+		},
+		{
+			name: "Long string - small limit",
+			args: args{
+				str:  "05Kj7z2AXCl603gMJu6B23z2sD",
+				size: 10,
+			},
+			want: "05Kj7z2...",
+		},
+		{
+			name: "Long string - small limit with \\n",
+			args: args{
+				str:  "05\nKj7z2AXCl603gMJu6B23z2sD",
+				size: 10,
+			},
+			want: "05 Kj7z...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, prepareTagValue(tt.args.str, tt.args.size, true))
 		})
 	}
 }
 
 func Test_generateToken(t *testing.T) {
-	rand.Seed(time.Now().UnixMicro())
-	count := rand.Intn(20)
+	r := rand.New(rand.NewSource(time.Now().UnixMicro()))
+	count := r.Intn(20)
 	for tt := 0; tt < count; tt++ {
 		require.Equal(t, 32, len(generateToken()))
 	}

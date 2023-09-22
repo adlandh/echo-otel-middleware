@@ -9,8 +9,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
-	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
-	"go.opentelemetry.io/otel/semconv/v1.17.0/httpconv"
+	semconv "go.opentelemetry.io/otel/semconv/v1.18.0"
+	"go.opentelemetry.io/otel/semconv/v1.18.0/httpconv"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -37,12 +37,16 @@ type (
 		// add req body & resp body to attributes
 		IsBodyDump bool
 
-		// prevent logging long http request bodies
-		LimitHTTPBody bool
+		// remove \\n from values (necessary for sentry)
+		RemoveNewLines bool
 
-		// http body limit size (in bytes)
+		// Tag name limit size. <=0 for unlimited, for sentry use 32
+		LimitNameSize int
+
+		// Tag value limit size (in bytes)
 		// NOTE: don't specify values larger than 60000 as jaeger can't handle values in span.LogKV larger than 60000 bytes
-		LimitSize int
+		// For sentry use 200
+		LimitValueSize int
 	}
 )
 
@@ -52,8 +56,7 @@ var (
 		Skipper:        middleware.DefaultSkipper,
 		AreHeadersDump: true,
 		IsBodyDump:     false,
-		LimitHTTPBody:  true,
-		LimitSize:      60_000,
+		LimitValueSize: 1024,
 	}
 )
 
@@ -111,13 +114,13 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 
 			//Add path parameters
 			for _, paramName := range c.ParamNames() {
-				span.SetAttributes(attribute.String("http.path."+paramName, c.Param(paramName)))
+				setAttr(span, config, "http.path."+paramName, c.Param(paramName))
 			}
 
 			//Dump request headers
 			if config.AreHeadersDump {
 				for k := range request.Header {
-					span.SetAttributes(attribute.String("http.req.header."+k, request.Header.Get(k)))
+					setAttr(span, config, "http.req.header."+k, request.Header.Get(k))
 				}
 			}
 
@@ -129,11 +132,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 				if c.Request().Body != nil {
 					reqBody, _ = io.ReadAll(c.Request().Body)
 
-					if config.LimitHTTPBody {
-						span.SetAttributes(attribute.String("http.req.body", limitString(string(reqBody), config.LimitSize)))
-					} else {
-						span.SetAttributes(attribute.String("http.req.body", string(reqBody)))
-					}
+					setAttr(span, config, "http.req.body", string(reqBody))
 				}
 
 				request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
@@ -149,7 +148,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			// call next middleware / controller
 			err = next(c)
 			if err != nil {
-				span.SetAttributes(attribute.String("echo.error", err.Error()))
+				setAttr(span, config, "echo.error", err.Error())
 				c.Error(err) // call custom registered error handler
 			}
 
@@ -162,17 +161,13 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			//Dump response headers
 			if config.AreHeadersDump {
 				for k := range c.Response().Header() {
-					span.SetAttributes(attribute.String("http.resp.header."+k, c.Response().Header().Get(k)))
+					setAttr(span, config, "http.resp.header."+k, c.Response().Header().Get(k))
 				}
 			}
 
 			// Dump response body
 			if config.IsBodyDump {
-				if config.LimitHTTPBody {
-					span.SetAttributes(attribute.String("http.resp.body", limitString(respDumper.GetResponse(), config.LimitSize)))
-				} else {
-					span.SetAttributes(attribute.String("http.resp.body", respDumper.GetResponse()))
-				}
+				setAttr(span, config, "http.resp.body", respDumper.GetResponse())
 			}
 
 			return nil // error was already processed with ctx.Error(err)
