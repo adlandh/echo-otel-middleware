@@ -9,8 +9,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
-	semconv "go.opentelemetry.io/otel/semconv/v1.18.0"
-	"go.opentelemetry.io/otel/semconv/v1.18.0/httpconv"
+	semconv "go.opentelemetry.io/otel/semconv/v1.19.0"
+	"go.opentelemetry.io/otel/semconv/v1.19.0/httpconv"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
