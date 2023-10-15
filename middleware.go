@@ -128,14 +128,14 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			var respDumper *responseDumper
 			if config.IsBodyDump {
 				// request
-				var reqBody []byte
-				if c.Request().Body != nil {
-					reqBody, _ = io.ReadAll(c.Request().Body)
-
-					setAttr(span, config, "http.req.body", string(reqBody))
+				if request.Body != nil {
+					reqBody, err := io.ReadAll(request.Body)
+					if err == nil {
+						setAttr(span, config, "http.req.body", string(reqBody))
+						_ = request.Body.Close()
+						request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
+					}
 				}
-
-				request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
 
 				// response
 				respDumper = newResponseDumper(c.Response())
