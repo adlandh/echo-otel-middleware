@@ -1,0 +1,48 @@
+run:
+  timeout: 5m
+  tests: false
+  go: "1.21"
+
+linters:
+  disable-all: true
+  fix: true
+  enable:
+    - bodyclose
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - asciicheck
+    - cyclop
+    - dupl
+    - dupword
+    - errorlint
+    - exportloopref
+    - forcetypeassert
+    - funlen
+    - gocritic
+    - gofmt
+    - goimports
+    - gosec
+    - gosmopolitan
+    - loggercheck
+    - makezero
+    - mirror
+    - noctx
+    - prealloc
+    - predeclared
+    - stylecheck
+    - wastedassign
+    - wrapcheck
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+
+linters-settings:
+  govet:
+    check-shadowing: true
+    enable-all: true

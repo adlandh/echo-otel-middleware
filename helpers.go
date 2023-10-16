@@ -1,4 +1,4 @@
-package echo_otel_middleware
+package echootelmiddleware
 
 import (
 	"crypto/rand"
@@ -12,7 +12,7 @@ import (
 
 func prepareTagValue(str string, size int, removeNewLine bool) string {
 	if removeNewLine {
-		str = strings.Replace(str, "\n", " ", -1) // no \n ib strings
+		str = strings.ReplaceAll(str, "\n", " ") // no \n in strings
 	}
 	if size <= 0 || size >= len(str) {
 		return str

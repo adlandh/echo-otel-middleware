@@ -1,4 +1,4 @@
-package echo_otel_middleware
+package echootelmiddleware
 
 import (
 	"math/rand"

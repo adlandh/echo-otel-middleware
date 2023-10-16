@@ -1,8 +1,9 @@
-package echo_otel_middleware
+package echootelmiddleware
 
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -28,7 +29,8 @@ func newResponseDumper(resp *echo.Response) *responseDumper {
 }
 
 func (d *responseDumper) Write(b []byte) (int, error) {
-	return d.mw.Write(b)
+	nBytes, err := d.mw.Write(b)
+	return nBytes, fmt.Errorf("error writing response: %w", err)
 }
 
 func (d *responseDumper) GetResponse() string {
@@ -36,9 +38,16 @@ func (d *responseDumper) GetResponse() string {
 }
 
 func (d *responseDumper) Flush() {
-	d.ResponseWriter.(http.Flusher).Flush()
+	if flusher, ok := d.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func (d *responseDumper) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return d.ResponseWriter.(http.Hijacker).Hijack()
+	if hijacker, ok := d.ResponseWriter.(http.Hijacker); ok {
+		conn, rw, err := hijacker.Hijack()
+		return conn, rw, fmt.Errorf("error hijacking response: %w", err)
+	}
+
+	return nil, nil, nil
 }
