@@ -21,6 +21,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const (
+	userID       = "123"
+	userEndpoint = "/user/:id"
+	userURL      = "/user/" + userID
+	defaultHost  = "example.com"
+)
+
 func TestGetSpanNotInstrumented(t *testing.T) {
 	router := echo.New()
 	router.GET("/ping", func(c echo.Context) error {
@@ -41,7 +48,7 @@ func TestPropagationWithGlobalPropagators(t *testing.T) {
 	provider := trace.NewNoopTracerProvider()
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
-	r := httptest.NewRequest("GET", "/user/123", nil)
+	r := httptest.NewRequest("GET", userURL, nil)
 	w := httptest.NewRecorder()
 
 	ctx := context.Background()
@@ -55,7 +62,7 @@ func TestPropagationWithGlobalPropagators(t *testing.T) {
 
 	router := echo.New()
 	router.Use(Middleware())
-	router.GET("/user/:id", func(c echo.Context) error {
+	router.GET(userEndpoint, func(c echo.Context) error {
 		span := trace.SpanFromContext(c.Request().Context())
 		assert.Equal(t, sc.TraceID(), span.SpanContext().TraceID())
 		assert.Equal(t, sc.SpanID(), span.SpanContext().SpanID())
@@ -64,7 +71,7 @@ func TestPropagationWithGlobalPropagators(t *testing.T) {
 
 	router.ServeHTTP(w, r)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
-	assert.Equal(t, http.StatusOK, w.Result().StatusCode, "should call the 'user' handler")
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
 }
 
 func TestPropagationWithCustomPropagators(t *testing.T) {
@@ -72,7 +79,7 @@ func TestPropagationWithCustomPropagators(t *testing.T) {
 
 	b3 := b3prop.New()
 
-	r := httptest.NewRequest("GET", "/user/123", nil)
+	r := httptest.NewRequest("GET", userURL, nil)
 	w := httptest.NewRecorder()
 
 	ctx := context.Background()
@@ -89,7 +96,7 @@ func TestPropagationWithCustomPropagators(t *testing.T) {
 		TracerProvider: provider,
 		Propagator:     b3,
 	}))
-	router.GET("/user/:id", func(c echo.Context) error {
+	router.GET(userEndpoint, func(c echo.Context) error {
 		span := trace.SpanFromContext(c.Request().Context())
 		assert.Equal(t, sc.TraceID(), span.SpanContext().TraceID())
 		assert.Equal(t, sc.SpanID(), span.SpanContext().SpanID())
@@ -97,7 +104,7 @@ func TestPropagationWithCustomPropagators(t *testing.T) {
 	})
 
 	router.ServeHTTP(w, r)
-	assert.Equal(t, http.StatusOK, w.Result().StatusCode, "should call the 'user' handler")
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
 }
 
 func TestSkipper(t *testing.T) {
@@ -118,7 +125,7 @@ func TestSkipper(t *testing.T) {
 	})
 
 	router.ServeHTTP(w, r)
-	assert.Equal(t, http.StatusOK, w.Result().StatusCode, "should call the 'ping' handler")
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
 }
 
 func TestChildSpanFromGlobalTracer(t *testing.T) {
@@ -128,15 +135,15 @@ func TestChildSpanFromGlobalTracer(t *testing.T) {
 
 	router := echo.New()
 	router.Use(Middleware())
-	router.GET("/user/:id", func(c echo.Context) error {
+	router.GET(userEndpoint, func(c echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 
-	r := httptest.NewRequest("GET", "/user/123", nil)
+	r := httptest.NewRequest("GET", userURL, nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, r)
-	assert.Equal(t, http.StatusOK, w.Result().StatusCode, "should call the 'user' handler")
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
 	assert.Len(t, sr.Ended(), 1)
 }
 
@@ -146,15 +153,15 @@ func TestChildSpanFromCustomTracer(t *testing.T) {
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider}))
-	router.GET("/user/:id", func(c echo.Context) error {
+	router.GET(userEndpoint, func(c echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 
-	r := httptest.NewRequest("GET", "/user/123", nil)
+	r := httptest.NewRequest("GET", userURL, nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, r)
-	assert.Equal(t, http.StatusOK, w.Result().StatusCode, "should call the 'user' handler")
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
 	assert.Len(t, sr.Ended(), 1)
 }
 
@@ -164,12 +171,12 @@ func TestTrace200(t *testing.T) {
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider}))
-	router.GET("/user/:id", func(c echo.Context) error {
+	router.GET(userEndpoint, func(c echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
 
-	r := httptest.NewRequest("GET", "/user/123", nil)
+	r := httptest.NewRequest("GET", userURL, nil)
 	w := httptest.NewRecorder()
 
 	// do and verify the request
@@ -181,13 +188,13 @@ func TestTrace200(t *testing.T) {
 	spans := sr.Ended()
 	require.Len(t, spans, 1)
 	span := spans[0]
-	assert.Equal(t, "HTTP GET URL: /user/:id URI: /user/123", span.Name())
+	assert.Equal(t, "HTTP GET URL: "+userEndpoint+" URI: "+userURL, span.Name())
 	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
 	attrs := span.Attributes()
-	assert.Contains(t, attrs, attribute.String("net.host.name", "example.com"))
+	assert.Contains(t, attrs, attribute.String("net.host.name", defaultHost))
 	assert.Contains(t, attrs, attribute.Int("http.status_code", http.StatusOK))
 	assert.Contains(t, attrs, attribute.String("http.method", "GET"))
-	assert.Contains(t, attrs, attribute.String("http.route", "/user/:id"))
+	assert.Contains(t, attrs, attribute.String("http.route", userEndpoint))
 }
 
 func TestTrace200WithReqAndRespBody(t *testing.T) {
@@ -196,12 +203,12 @@ func TestTrace200WithReqAndRespBody(t *testing.T) {
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true}))
-	router.GET("/user/:id", func(c echo.Context) error {
+	router.GET(userEndpoint, func(c echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
 
-	r := httptest.NewRequest("GET", "/user/123", strings.NewReader("test"))
+	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
 	w := httptest.NewRecorder()
 
 	// do and verify the request
@@ -216,12 +223,12 @@ func TestTrace200WithReqAndRespBody(t *testing.T) {
 	assert.Equal(t, "HTTP GET URL: /user/:id URI: /user/123", span.Name())
 	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
 	attrs := span.Attributes()
-	assert.Contains(t, attrs, attribute.String("net.host.name", "example.com"))
+	assert.Contains(t, attrs, attribute.String("net.host.name", defaultHost))
 	assert.Contains(t, attrs, attribute.Int("http.status_code", http.StatusOK))
 	assert.Contains(t, attrs, attribute.String("http.method", "GET"))
-	assert.Contains(t, attrs, attribute.String("http.route", "/user/:id"))
+	assert.Contains(t, attrs, attribute.String("http.route", userEndpoint))
 	assert.Contains(t, attrs, attribute.String("http.req.body", "test"))
-	assert.Contains(t, attrs, attribute.String("http.resp.body", "123"))
+	assert.Contains(t, attrs, attribute.String("http.resp.body", userID))
 }
 
 func TestError(t *testing.T) {
@@ -249,7 +256,7 @@ func TestError(t *testing.T) {
 	span := spans[0]
 	assert.Equal(t, "HTTP GET URL: /server_err", span.Name())
 	attrs := span.Attributes()
-	assert.Contains(t, attrs, attribute.String("net.host.name", "example.com"))
+	assert.Contains(t, attrs, attribute.String("net.host.name", defaultHost))
 	assert.Contains(t, attrs, attribute.Int("http.status_code", http.StatusInternalServerError))
 	assert.Contains(t, attrs, attribute.String("echo.error", "oh no"))
 	// server errors set the status
@@ -310,7 +317,7 @@ func TestStatusError(t *testing.T) {
 			assert.Equal(t, tc.spanCode, span.Status().Code)
 
 			attrs := span.Attributes()
-			assert.Contains(t, attrs, attribute.String("net.host.name", "example.com"))
+			assert.Contains(t, attrs, attribute.String("net.host.name", defaultHost))
 			assert.Contains(t, attrs, attribute.String("http.route", "/err"))
 			assert.Contains(t, attrs, attribute.String("http.method", "GET"))
 			assert.Contains(t, attrs, attribute.Int("http.status_code", tc.statusCode))
