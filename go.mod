@@ -3,7 +3,7 @@ module github.com/adlandh/echo-otel-middleware
 go 1.18
 
 require (
-	github.com/labstack/echo/v4 v4.11.1
+	github.com/labstack/echo/v4 v4.11.2
 	github.com/stretchr/testify v1.8.4
 	go.opentelemetry.io/otel v1.19.0
 	go.opentelemetry.io/otel/trace v1.19.0
