@@ -35,6 +35,7 @@ linters:
     - predeclared
     - stylecheck
     - wastedassign
+    - wsl
     - wrapcheck
 issues:
   exclude-use-default: false
