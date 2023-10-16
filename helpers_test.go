@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_prepareTagName(t *testing.T) {
+func TestPrepareTagName(t *testing.T) {
 	type args struct {
 		str  string
 		size int
@@ -43,7 +43,7 @@ func Test_prepareTagName(t *testing.T) {
 	}
 }
 
-func Test_prepareTagValue(t *testing.T) {
+func TestPrepareTagValue(t *testing.T) {
 	type args struct {
 		str  string
 		size int
@@ -85,7 +85,7 @@ func Test_prepareTagValue(t *testing.T) {
 	}
 }
 
-func Test_getRequestID(t *testing.T) {
+func TestGetRequestID(t *testing.T) {
 	e := echo.New()
 
 	t.Run("token in header", func(t *testing.T) {
