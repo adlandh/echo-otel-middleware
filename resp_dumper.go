@@ -20,6 +20,7 @@ type responseDumper struct {
 
 func newResponseDumper(resp *echo.Response) *responseDumper {
 	buf := new(bytes.Buffer)
+
 	return &responseDumper{
 		ResponseWriter: resp.Writer,
 
