@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/adlandh/response-dumper"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.opentelemetry.io/otel"
@@ -102,7 +103,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 	}
 }
 
-func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request) *responseDumper {
+func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request) *response.Dumper {
 	// Add path parameters
 	if path := c.Path(); path != "" {
 		span.SetAttributes(semconv.HTTPRoute(path))
@@ -120,7 +121,7 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 	}
 
 	// Dump request & response body
-	var respDumper *responseDumper
+	var respDumper *response.Dumper
 
 	if config.IsBodyDump {
 		// request
@@ -136,14 +137,14 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 		}
 
 		// response
-		respDumper = newResponseDumper(c.Response())
+		respDumper = response.NewDumper(c.Response())
 		c.Response().Writer = respDumper
 	}
 
 	return respDumper
 }
 
-func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper *responseDumper) {
+func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper *response.Dumper) {
 	status := c.Response().Status
 	span.SetStatus(httpconv.ServerStatus(status))
 
