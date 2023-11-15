@@ -8,24 +8,26 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func prepareTagValue(str string, size int, removeNewLine bool) string {
-	if removeNewLine {
-		str = strings.ReplaceAll(str, "\n", " ") // no \n in strings
-	}
-
-	if size <= 0 || size >= len(str) {
+func prepareTagValue(str string, removeNewLine bool) string {
+	if !removeNewLine {
 		return str
 	}
 
-	return str[:size-3] + "..."
+	return strings.ReplaceAll(str, "\n", " ") // no \n in strings
 }
 
 func prepareTagName(str string, size int) string {
-	if size <= 0 || size >= len(str) {
+	if size <= 0 {
 		return str
 	}
 
-	return str[:size]
+	result := []rune(str)
+
+	if len(result) <= size {
+		return str
+	}
+
+	return string(result[:size])
 }
 
 func getRequestID(ctx echo.Context) string {
@@ -38,11 +40,19 @@ func getRequestID(ctx echo.Context) string {
 	return requestID
 }
 
-func setAttr(span trace.Span, config OtelConfig, tag, value string) {
-	if tag == "" || value == "" {
-		return
+func setAttr(span trace.Span, limitNameSize int, removeNewLines bool, attrs ...attribute.KeyValue) {
+	span.SetAttributes(prepareAttrs(limitNameSize, removeNewLines, attrs...)...)
+}
+
+func prepareAttrs(limitNameSize int, removeNewLines bool, attrs ...attribute.KeyValue) []attribute.KeyValue {
+	for i := range attrs {
+		if attrs[i].Value.Type() != attribute.STRING {
+			continue
+		}
+
+		attrs[i].Key = attribute.Key(prepareTagName(string(attrs[i].Key), limitNameSize))
+		attrs[i].Value = attribute.StringValue(prepareTagValue(attrs[i].Value.AsString(), removeNewLines))
 	}
 
-	span.SetAttributes(attribute.String(prepareTagName(tag, config.LimitNameSize),
-		prepareTagValue(value, config.LimitValueSize, config.RemoveNewLines)))
+	return attrs
 }
