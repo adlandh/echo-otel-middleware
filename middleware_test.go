@@ -19,6 +19,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 const (
@@ -49,7 +50,7 @@ func TestGetSpanNotInstrumented(t *testing.T) {
 }
 
 func TestPropagationWithGlobalPropagators(t *testing.T) {
-	provider := trace.NewNoopTracerProvider()
+	provider := noop.NewTracerProvider()
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	r := httptest.NewRequest("GET", userURL, nil)
@@ -79,7 +80,7 @@ func TestPropagationWithGlobalPropagators(t *testing.T) {
 }
 
 func TestPropagationWithCustomPropagators(t *testing.T) {
-	provider := trace.NewNoopTracerProvider()
+	provider := noop.NewTracerProvider()
 
 	b3 := b3prop.New()
 
@@ -231,8 +232,8 @@ func TestTrace200WithReqAndRespBody(t *testing.T) {
 	assert.Contains(t, attrs, attribute.Int(statusTag, http.StatusOK))
 	assert.Contains(t, attrs, attribute.String(methodTag, "GET"))
 	assert.Contains(t, attrs, attribute.String(routeTag, userEndpoint))
-	assert.Contains(t, attrs, attribute.String("http.req.body", "test"))
-	assert.Contains(t, attrs, attribute.String("http.resp.body", userID))
+	assert.Contains(t, attrs, attribute.String("http.request.body", "test"))
+	assert.Contains(t, attrs, attribute.String("http.response.body", userID))
 }
 
 func TestError(t *testing.T) {
@@ -341,4 +342,79 @@ func TestErrorNotSwallowedByMiddleware(t *testing.T) {
 
 	err := h(c)
 	assert.Equal(t, assert.AnError, err)
+}
+
+func BenchmarkWithMiddleware(b *testing.B) {
+	router := echo.New()
+	router.Use(Middleware())
+	router.GET(userEndpoint, func(c echo.Context) error {
+		id := c.Param("id")
+		return c.String(http.StatusOK, id)
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	w := httptest.NewRecorder()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		// do and verify the request
+		router.ServeHTTP(w, r)
+	}
+}
+
+func BenchmarkWithMiddlewareWithNoBodyNoHeaders(b *testing.B) {
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{AreHeadersDump: false}))
+	router.GET(userEndpoint, func(c echo.Context) error {
+		id := c.Param("id")
+		return c.String(http.StatusOK, id)
+	})
+
+	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
+	w := httptest.NewRecorder()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		// do and verify the request
+		router.ServeHTTP(w, r)
+	}
+}
+
+func BenchmarkWithMiddlewareWithBodyDump(b *testing.B) {
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{IsBodyDump: true}))
+	router.GET(userEndpoint, func(c echo.Context) error {
+		id := c.Param("id")
+		return c.String(http.StatusOK, id)
+	})
+
+	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
+	w := httptest.NewRecorder()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		// do and verify the request
+		router.ServeHTTP(w, r)
+	}
+}
+
+func BenchmarkWithoutMiddleware(b *testing.B) {
+	router := echo.New()
+	router.GET(userEndpoint, func(c echo.Context) error {
+		id := c.Param("id")
+		return c.String(http.StatusOK, id)
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	w := httptest.NewRecorder()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		// do and verify the request
+		router.ServeHTTP(w, r)
+	}
 }

@@ -45,8 +45,7 @@ func TestPrepareTagName(t *testing.T) {
 
 func TestPrepareTagValue(t *testing.T) {
 	type args struct {
-		str  string
-		size int
+		str string
 	}
 	tests := []struct {
 		name string
@@ -54,33 +53,23 @@ func TestPrepareTagValue(t *testing.T) {
 		want string
 	}{
 		{
-			name: "Short string - large limit",
+			name: "String with no \\n",
 			args: args{
-				str:  "05Kj7",
-				size: 100,
+				str: "05Kj7z2AXCl603gMJu6B23z2sD",
 			},
-			want: "05Kj7",
+			want: "05Kj7z2AXCl603gMJu6B23z2sD",
 		},
 		{
-			name: "Long string - small limit",
+			name: "String with \\n",
 			args: args{
-				str:  "05Kj7z2AXCl603gMJu6B23z2sD",
-				size: 10,
+				str: "05\nKj7z2AXCl603gMJu6B23z2sD",
 			},
-			want: "05Kj7z2...",
-		},
-		{
-			name: "Long string - small limit with \\n",
-			args: args{
-				str:  "05\nKj7z2AXCl603gMJu6B23z2sD",
-				size: 10,
-			},
-			want: "05 Kj7z...",
+			want: "05 Kj7z2AXCl603gMJu6B23z2sD",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, prepareTagValue(tt.args.str, tt.args.size, true))
+			require.Equal(t, tt.want, prepareTagValue(tt.args.str, true))
 		})
 	}
 }
