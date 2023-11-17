@@ -4,17 +4,20 @@ package echootelmiddleware
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/adlandh/response-dumper"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
-	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
-	"go.opentelemetry.io/otel/semconv/v1.20.0/httpconv"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -116,7 +119,7 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 
 	// Dump request headers
 	if config.AreHeadersDump {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, httpconv.RequestHeader(request.Header)...)
+		setAttr(span, config.LimitNameSize, config.RemoveNewLines, dumpHeaders("http.request.headers", request.Header)...)
 	}
 
 	// Dump request & response body
@@ -142,7 +145,11 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 
 func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper *response.Dumper) {
 	status := c.Response().Status
-	span.SetStatus(httpconv.ServerStatus(status))
+	if status >= 500 {
+		span.SetStatus(codes.Error, "")
+	} else {
+		span.SetStatus(codes.Unset, "")
+	}
 
 	if status > 0 {
 		setAttr(span, config.LimitNameSize, config.RemoveNewLines, semconv.HTTPStatusCode(status))
@@ -150,7 +157,7 @@ func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper
 
 	// Dump response headers
 	if config.AreHeadersDump {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, httpconv.ResponseHeader(c.Response().Header())...)
+		setAttr(span, config.LimitNameSize, config.RemoveNewLines, dumpHeaders("http.response.headers", c.Response().Header())...)
 	}
 
 	// Dump response body
@@ -176,11 +183,22 @@ func createSpan(c echo.Context, config OtelConfig) (*http.Request, oteltrace.Spa
 
 	var span oteltrace.Span
 
+	if request.URL == nil {
+		request.URL = &url.URL{}
+	}
+
 	ctx := config.Propagator.Extract(savedCtx, propagation.HeaderCarrier(request.Header))
 	opts := []oteltrace.SpanStartOption{
-		oteltrace.WithAttributes(httpconv.ServerRequest("", request)...),
 		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
-		oteltrace.WithAttributes(attribute.String("client_ip", realIP), attribute.String("request_id", requestID)),
+		oteltrace.WithAttributes(
+			attribute.String("client_ip", realIP),
+			attribute.String("request_id", requestID),
+			attribute.String("user_agent", request.UserAgent()),
+			attribute.String("http.method", request.Method),
+			attribute.String("http.proto", request.Proto),
+			attribute.String("http.host", request.Host),
+			attribute.String("http.scheme", request.URL.Scheme),
+		),
 	}
 	ctx, span = tracer.Start(ctx, opName, opts...)
 
@@ -203,4 +221,21 @@ func setDefaultValues(config *OtelConfig) {
 	if config.Skipper == nil {
 		config.Skipper = middleware.DefaultSkipper
 	}
+}
+
+func dumpHeaders(prefix string, h http.Header) []attribute.KeyValue {
+	key := func(k string) attribute.Key {
+		k = strings.ToLower(k)
+		k = strings.ReplaceAll(k, "-", "_")
+		k = fmt.Sprintf("%s.%s", prefix, k)
+
+		return attribute.Key(k)
+	}
+
+	attrs := make([]attribute.KeyValue, 0, len(h))
+	for k, v := range h {
+		attrs = append(attrs, key(k).StringSlice(v))
+	}
+
+	return attrs
 }

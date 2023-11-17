@@ -27,7 +27,7 @@ const (
 	userEndpoint = "/user/:id"
 	userURL      = "/user/" + userID
 	defaultHost  = "example.com"
-	hostNameTag  = "net.host.name"
+	hostNameTag  = "http.host"
 	statusTag    = "http.status_code"
 	methodTag    = "http.method"
 	routeTag     = "http.route"
@@ -202,18 +202,19 @@ func TestTrace200(t *testing.T) {
 	assert.Contains(t, attrs, attribute.String(routeTag, userEndpoint))
 }
 
-func TestTrace200WithReqAndRespBody(t *testing.T) {
+func TestTrace200WithHeadersAndBody(t *testing.T) {
 	sr := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
 
 	router := echo.New()
-	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true}))
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true, AreHeadersDump: true}))
 	router.GET(userEndpoint, func(c echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
 
 	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
+	r.Header.Set(echo.HeaderContentType, "plain/text")
 	w := httptest.NewRecorder()
 
 	// do and verify the request
@@ -234,6 +235,7 @@ func TestTrace200WithReqAndRespBody(t *testing.T) {
 	assert.Contains(t, attrs, attribute.String(routeTag, userEndpoint))
 	assert.Contains(t, attrs, attribute.String("http.request.body", "test"))
 	assert.Contains(t, attrs, attribute.String("http.response.body", userID))
+	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.content_type", []string{"plain/text"}))
 }
 
 func TestError(t *testing.T) {
