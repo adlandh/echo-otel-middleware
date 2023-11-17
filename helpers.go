@@ -46,12 +46,10 @@ func setAttr(span trace.Span, limitNameSize int, removeNewLines bool, attrs ...a
 
 func prepareAttrs(limitNameSize int, removeNewLines bool, attrs ...attribute.KeyValue) []attribute.KeyValue {
 	for i := range attrs {
-		if attrs[i].Value.Type() != attribute.STRING {
-			continue
-		}
-
 		attrs[i].Key = attribute.Key(prepareTagName(string(attrs[i].Key), limitNameSize))
-		attrs[i].Value = attribute.StringValue(prepareTagValue(attrs[i].Value.AsString(), removeNewLines))
+		if attrs[i].Value.Type() == attribute.STRING {
+			attrs[i].Value = attribute.StringValue(prepareTagValue(attrs[i].Value.AsString(), removeNewLines))
+		}
 	}
 
 	return attrs
