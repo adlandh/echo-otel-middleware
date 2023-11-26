@@ -1,0 +1,9 @@
+pre-push:
+  parallel: true
+  commands:
+    lint:
+      glob: "*.go"
+      run: golangci-lint run
+    test:
+      glob: "*.go"
+      run: go test -cover -race ./...
