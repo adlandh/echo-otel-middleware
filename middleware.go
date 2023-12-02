@@ -174,8 +174,8 @@ func createSpan(c echo.Context, config OtelConfig) (*http.Request, oteltrace.Spa
 	savedCtx := request.Context()
 
 	opName := "HTTP " + request.Method + " URL: " + c.Path()
-	if c.Path() != c.Request().RequestURI {
-		opName = opName + " URI: " + c.Request().RequestURI
+	if c.Path() != request.RequestURI {
+		opName = opName + " URI: " + request.RequestURI
 	}
 
 	realIP := c.RealIP()
