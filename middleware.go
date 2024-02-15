@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
-	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.23.1"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -152,7 +152,7 @@ func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper
 	}
 
 	if status > 0 {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, semconv.HTTPStatusCode(status))
+		setAttr(span, config.LimitNameSize, config.RemoveNewLines, semconv.HTTPResponseStatusCode(status))
 	}
 
 	// Dump response headers
