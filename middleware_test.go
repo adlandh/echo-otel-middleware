@@ -28,7 +28,7 @@ const (
 	userURL      = "/user/" + userID
 	defaultHost  = "example.com"
 	hostNameTag  = "http.host"
-	statusTag    = "http.status_code"
+	statusTag    = "http.response.status_code"
 	methodTag    = "http.method"
 	routeTag     = "http.route"
 )
