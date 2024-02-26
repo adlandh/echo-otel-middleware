@@ -1,6 +1,8 @@
 module github.com/adlandh/echo-otel-middleware
 
-go 1.21
+go 1.22
+
+toolchain go1.22.0
 
 require (
 	github.com/adlandh/response-dumper v1.0.1
