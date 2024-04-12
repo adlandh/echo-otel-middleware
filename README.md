@@ -41,7 +41,7 @@ func main() {
 	app.Use(echootelmiddleware.MiddlewareWithConfig(echootelmiddleware.OtelConfig{
 		TracerProvider: tp,
 		AreHeadersDump: true, // dump request && response headers
-		IsBodyDump:     true, // dump request && response bod
+		IsBodyDump:     true, // dump request && response body
 	}))
 
 	// Add some endpoints
