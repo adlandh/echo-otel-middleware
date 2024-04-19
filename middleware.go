@@ -136,7 +136,7 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 		}
 
 		// response
-		respDumper = response.NewDumper(c.Response())
+		respDumper = response.NewDumper(c.Response().Writer)
 		c.Response().Writer = respDumper
 	}
 
