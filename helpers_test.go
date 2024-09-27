@@ -69,7 +69,7 @@ func TestPrepareTagValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, prepareTagValue(tt.args.str, true))
+			require.Equal(t, tt.want, prepareTagValue(tt.args.str, 200, true))
 		})
 	}
 }

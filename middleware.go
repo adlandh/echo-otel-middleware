@@ -50,10 +50,7 @@ type (
 		// Tag name limit size. <=0 for unlimited, for sentry use 32
 		LimitNameSize int
 
-		// Tag value limit size (in bytes)
-		// NOTE: don't specify values larger than 60000 as jaeger can't handle values in span.LogKV larger than 60000 bytes
-		// For sentry use 200
-		// Deprecated: use WithRawLimit option for traceProvider
+		// Tag value limit size (in bytes). <=0 for unlimited, for sentry use 200
 		LimitValueSize int
 	}
 )
@@ -96,7 +93,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			err = next(c)
 			if err != nil {
 				span.RecordError(err)
-				setAttr(span, config.LimitNameSize, config.RemoveNewLines, attribute.String("echo.error", err.Error()))
+				setAttr(span, config, attribute.String("echo.error", err.Error()))
 				c.Error(err) // call custom registered error handler
 			}
 
@@ -110,16 +107,16 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request) *response.Dumper {
 	// Add path parameters
 	if path := c.Path(); path != "" {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, semconv.HTTPRoute(path))
+		setAttr(span, config, semconv.HTTPRoute(path))
 	}
 
 	for _, paramName := range c.ParamNames() {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, attribute.String("http.path."+paramName, c.Param(paramName)))
+		setAttr(span, config, attribute.String("http.path."+paramName, c.Param(paramName)))
 	}
 
 	// Dump request headers
 	if config.AreHeadersDump {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, dumpHeaders("http.request.headers", request.Header)...)
+		setAttr(span, config, dumpHeaders("http.request.headers", request.Header)...)
 	}
 
 	// Dump request & response body
@@ -130,7 +127,7 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 		if request.Body != nil {
 			reqBody, _ := io.ReadAll(request.Body)
 
-			setAttr(span, config.LimitNameSize, config.RemoveNewLines, attribute.String("http.request.body", string(reqBody)))
+			setAttr(span, config, attribute.String("http.request.body", string(reqBody)))
 
 			request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
 		}
@@ -152,17 +149,17 @@ func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper
 	}
 
 	if status > 0 {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, semconv.HTTPResponseStatusCode(status))
+		setAttr(span, config, semconv.HTTPResponseStatusCode(status))
 	}
 
 	// Dump response headers
 	if config.AreHeadersDump {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, dumpHeaders("http.response.headers", c.Response().Header())...)
+		setAttr(span, config, dumpHeaders("http.response.headers", c.Response().Header())...)
 	}
 
 	// Dump response body
 	if config.IsBodyDump {
-		setAttr(span, config.LimitNameSize, config.RemoveNewLines, attribute.String("http.response.body", respDumper.GetResponse()))
+		setAttr(span, config, attribute.String("http.response.body", respDumper.GetResponse()))
 	}
 }
 
