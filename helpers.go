@@ -2,32 +2,55 @@ package echootelmiddleware
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
-func prepareTagValue(str string, removeNewLine bool) string {
-	if !removeNewLine {
+func limitString(str string, size int) string {
+	if size <= 0 || len(str) <= size {
 		return str
 	}
 
-	return strings.ReplaceAll(str, "\n", " ") // no \n in strings
+	bytes := []byte(str)
+
+	if len(bytes) <= size {
+		return str
+	}
+
+	validBytes := bytes[:size]
+	for !utf8.Valid(validBytes) {
+		validBytes = validBytes[:len(validBytes)-1]
+	}
+
+	return string(validBytes)
+}
+
+func limitStringWithDots(str string, size int) string {
+	if size <= 10 {
+		return limitString(str, size)
+	}
+
+	result := limitString(str, size-3)
+	if result == str {
+		return str
+	}
+
+	return result + "..."
+}
+
+func prepareTagValue(str string, size int, removeNewLine bool) string {
+	if removeNewLine {
+		str = strings.ReplaceAll(str, "\n", " ") // no \n in strings
+	}
+
+	return limitStringWithDots(str, size)
 }
 
 func prepareTagName(str string, size int) string {
-	if size <= 0 {
-		return str
-	}
-
-	result := []rune(str)
-
-	if len(result) <= size {
-		return str
-	}
-
-	return string(result[:size])
+	return limitString(str, size)
 }
 
 func getRequestID(ctx echo.Context) string {
@@ -40,15 +63,15 @@ func getRequestID(ctx echo.Context) string {
 	return requestID
 }
 
-func setAttr(span trace.Span, limitNameSize int, removeNewLines bool, attrs ...attribute.KeyValue) {
-	span.SetAttributes(prepareAttrs(limitNameSize, removeNewLines, attrs...)...)
+func setAttr(span trace.Span, config OtelConfig, attrs ...attribute.KeyValue) {
+	span.SetAttributes(prepareAttrs(config, attrs...)...)
 }
 
-func prepareAttrs(limitNameSize int, removeNewLines bool, attrs ...attribute.KeyValue) []attribute.KeyValue {
+func prepareAttrs(config OtelConfig, attrs ...attribute.KeyValue) []attribute.KeyValue {
 	for i := range attrs {
-		attrs[i].Key = attribute.Key(prepareTagName(string(attrs[i].Key), limitNameSize))
+		attrs[i].Key = attribute.Key(prepareTagName(string(attrs[i].Key), config.LimitNameSize))
 		if attrs[i].Value.Type() == attribute.STRING {
-			attrs[i].Value = attribute.StringValue(prepareTagValue(attrs[i].Value.AsString(), removeNewLines))
+			attrs[i].Value = attribute.StringValue(prepareTagValue(attrs[i].Value.AsString(), config.LimitValueSize, config.RemoveNewLines))
 		}
 	}
 
