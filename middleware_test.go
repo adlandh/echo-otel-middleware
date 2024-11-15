@@ -3,6 +3,7 @@ package echootelmiddleware
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -222,6 +223,10 @@ func TestTrace200WithHeadersAndBody(t *testing.T) {
 	response := w.Result()
 	require.Equal(t, http.StatusOK, response.StatusCode)
 
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, "123", string(body))
+
 	// verify traces look good
 	spans := sr.Ended()
 	require.Len(t, spans, 1)
@@ -235,6 +240,46 @@ func TestTrace200WithHeadersAndBody(t *testing.T) {
 	assert.Contains(t, attrs, attribute.String(routeTag, userEndpoint))
 	assert.Contains(t, attrs, attribute.String("http.request.body", "test"))
 	assert.Contains(t, attrs, attribute.String("http.response.body", userID))
+	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.content_type", []string{"plain/text"}))
+}
+
+func TestTrace200WithHeadersAndBodySkipped(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true, AreHeadersDump: true, BodySkipper: func(echo.Context) (bool, bool) { return true, true }}))
+	router.GET(userEndpoint, func(c echo.Context) error {
+		id := c.Param("id")
+		return c.String(http.StatusOK, id)
+	})
+
+	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
+	r.Header.Set(echo.HeaderContentType, "plain/text")
+	w := httptest.NewRecorder()
+
+	// do and verify the request
+	router.ServeHTTP(w, r)
+	response := w.Result()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, "123", string(body))
+
+	// verify traces look good
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	span := spans[0]
+	assert.Equal(t, "HTTP GET URL: /user/:id URI: /user/123", span.Name())
+	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
+	attrs := span.Attributes()
+	assert.Contains(t, attrs, attribute.String(hostNameTag, defaultHost))
+	assert.Contains(t, attrs, attribute.Int(statusTag, http.StatusOK))
+	assert.Contains(t, attrs, attribute.String(methodTag, "GET"))
+	assert.Contains(t, attrs, attribute.String(routeTag, userEndpoint))
+	assert.Contains(t, attrs, attribute.String("http.request.body", "[excluded]"))
+	assert.Contains(t, attrs, attribute.String("http.response.body", "[excluded]"))
 	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.content_type", []string{"plain/text"}))
 }
 

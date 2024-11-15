@@ -42,6 +42,13 @@ func main() {
 		TracerProvider: tp,
 		AreHeadersDump: true, // dump request && response headers
 		IsBodyDump:     true, // dump request && response body
+		// No dump for gzip
+		BodySkipper: func(c echo.Context) (bool, bool) {
+			if c.Request().Header.Get("Content-Encoding") == "gzip" {
+				return true, true
+			}
+			return false, false
+		},
 	}))
 
 	// Add some endpoints

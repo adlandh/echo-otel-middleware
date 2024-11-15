@@ -26,11 +26,20 @@ const (
 	tracerName = "github.com/adlandh/echo-otel-middleware"
 )
 
+type BodySkipper func(echo.Context) (skipReqBody bool, skipRespBody bool)
+
+func defaultBodySkipper(echo.Context) (skipReqBody bool, skipRespBody bool) {
+	return
+}
+
 type (
 	// OtelConfig defines the config for OpenTelemetry middleware.
 	OtelConfig struct {
 		// Skipper defines a function to skip middleware.
 		Skipper middleware.Skipper
+
+		// BodySkipper defines a function to exclude body from logging
+		BodySkipper BodySkipper
 
 		// OpenTelemetry TracerProvider
 		TracerProvider oteltrace.TracerProvider
@@ -59,6 +68,7 @@ var (
 	// DefaultOtelConfig is the default OpenTelemetry middleware config.
 	DefaultOtelConfig = OtelConfig{
 		Skipper:        middleware.DefaultSkipper,
+		BodySkipper:    defaultBodySkipper,
 		AreHeadersDump: true,
 		IsBodyDump:     false,
 	}
@@ -125,11 +135,20 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 	if config.IsBodyDump {
 		// request
 		if request.Body != nil {
-			reqBody, _ := io.ReadAll(request.Body)
+			var reqBody []byte
+			if skipReqBody, _ := config.BodySkipper(c); skipReqBody {
+				reqBody = []byte("[excluded]")
+			} else {
+				var err error
+
+				reqBody, err = io.ReadAll(request.Body)
+				if err == nil {
+					_ = request.Body.Close()
+					request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
+				}
+			}
 
 			setAttr(span, config, attribute.String("http.request.body", string(reqBody)))
-
-			request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
 		}
 
 		// response
@@ -159,7 +178,14 @@ func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper
 
 	// Dump response body
 	if config.IsBodyDump {
-		setAttr(span, config, attribute.String("http.response.body", respDumper.GetResponse()))
+		respBody := respDumper.GetResponse()
+
+		_, skipRespBody := config.BodySkipper(c)
+		if respBody != "" && skipRespBody {
+			respBody = "[excluded]"
+		}
+
+		setAttr(span, config, attribute.String("http.response.body", respBody))
 	}
 }
 
@@ -217,6 +243,10 @@ func setDefaultValues(config *OtelConfig) {
 
 	if config.Skipper == nil {
 		config.Skipper = middleware.DefaultSkipper
+	}
+
+	if config.BodySkipper == nil {
+		config.BodySkipper = defaultBodySkipper
 	}
 }
 
