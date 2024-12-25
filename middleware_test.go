@@ -345,7 +345,7 @@ func TestStatusError(t *testing.T) {
 			name:       "EchoHTTPClientError",
 			echoError:  "code=400, message=my error message",
 			statusCode: http.StatusBadRequest,
-			spanCode:   codes.Unset,
+			spanCode:   codes.Error,
 			handler: func(c echo.Context) error {
 				return echo.NewHTTPError(http.StatusBadRequest, "my error message")
 			},

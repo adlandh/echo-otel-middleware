@@ -26,6 +26,14 @@ const (
 	tracerName = "github.com/adlandh/echo-otel-middleware"
 )
 
+var key = func(k, prefix string) attribute.Key {
+	k = strings.ToLower(k)
+	k = strings.ReplaceAll(k, "-", "_")
+	k = fmt.Sprintf("%s.%s", prefix, k)
+
+	return attribute.Key(k)
+}
+
 type BodySkipper func(echo.Context) (skipReqBody bool, skipRespBody bool)
 
 func defaultBodySkipper(echo.Context) (skipReqBody bool, skipRespBody bool) {
@@ -94,7 +102,9 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			request, span, ctx, endSpan := createSpan(c, config)
 			defer endSpan()
 
-			respDumper := dumpReq(c, config, span, request)
+			skipReqBody, skipRespBody := config.BodySkipper(c)
+
+			respDumper := dumpReq(c, config, span, request, skipReqBody)
 
 			// setup request context - add opentracing span
 			c.SetRequest(request.WithContext(ctx))
@@ -107,14 +117,14 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 				c.Error(err) // call custom registered error handler
 			}
 
-			dumpResp(c, config, span, respDumper)
+			dumpResp(c, config, span, respDumper, skipRespBody)
 
 			return err
 		}
 	}
 }
 
-func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request) *response.Dumper {
+func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request, skipReqBody bool) *response.Dumper {
 	// Add path parameters
 	if path := c.Path(); path != "" {
 		setAttr(span, config, semconv.HTTPRoute(path))
@@ -136,7 +146,7 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 		// request
 		if request.Body != nil {
 			var reqBody []byte
-			if skipReqBody, _ := config.BodySkipper(c); skipReqBody {
+			if skipReqBody {
 				reqBody = []byte("[excluded]")
 			} else {
 				var err error
@@ -159,11 +169,15 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 	return respDumper
 }
 
-func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper *response.Dumper) {
+func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper *response.Dumper, skipRespBody bool) {
 	status := c.Response().Status
-	if status >= 500 {
+
+	switch {
+	case status >= 400:
 		span.SetStatus(codes.Error, "")
-	} else {
+	case status >= 200:
+		span.SetStatus(codes.Ok, "")
+	default:
 		span.SetStatus(codes.Unset, "")
 	}
 
@@ -180,7 +194,6 @@ func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper
 	if config.IsBodyDump {
 		respBody := respDumper.GetResponse()
 
-		_, skipRespBody := config.BodySkipper(c)
 		if respBody != "" && skipRespBody {
 			respBody = "[excluded]"
 		}
@@ -251,17 +264,9 @@ func setDefaultValues(config *OtelConfig) {
 }
 
 func dumpHeaders(prefix string, h http.Header) []attribute.KeyValue {
-	key := func(k string) attribute.Key {
-		k = strings.ToLower(k)
-		k = strings.ReplaceAll(k, "-", "_")
-		k = fmt.Sprintf("%s.%s", prefix, k)
-
-		return attribute.Key(k)
-	}
-
 	attrs := make([]attribute.KeyValue, 0, len(h))
 	for k, v := range h {
-		attrs = append(attrs, key(k).StringSlice(v))
+		attrs = append(attrs, key(k, prefix).StringSlice(v))
 	}
 
 	return attrs
