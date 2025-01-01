@@ -145,10 +145,9 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 	if config.IsBodyDump {
 		// request
 		if request.Body != nil {
-			var reqBody []byte
-			if skipReqBody {
-				reqBody = []byte("[excluded]")
-			} else {
+			reqBody := []byte("[excluded]")
+
+			if !skipReqBody {
 				var err error
 
 				reqBody, err = io.ReadAll(request.Body)
