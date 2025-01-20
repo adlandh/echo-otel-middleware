@@ -8,7 +8,7 @@ require (
 	github.com/adlandh/response-dumper v1.1.0
 	github.com/labstack/echo/v4 v4.13.3
 	github.com/stretchr/testify v1.10.0
-	go.opentelemetry.io/contrib/propagators/b3 v1.33.0
+	go.opentelemetry.io/contrib/propagators/b3 v1.34.0
 	go.opentelemetry.io/otel v1.34.0
 	go.opentelemetry.io/otel/sdk v1.34.0
 	go.opentelemetry.io/otel/trace v1.34.0
