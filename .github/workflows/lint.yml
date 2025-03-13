@@ -16,4 +16,4 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Lint Code Base
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v6
