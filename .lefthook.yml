@@ -3,7 +3,7 @@ pre-push:
   commands:
     lint:
       glob: "*.go"
-      run: golangci-lint run
+      run: curl -sS https://raw.githubusercontent.com/adlandh/golangci-lint-config/refs/heads/main/.golangci.yml -o .golangci.yml && golangci-lint run
     test:
       glob: "*.go"
       run: go test -cover -race ./...
