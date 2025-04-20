@@ -4,11 +4,9 @@ package echootelmiddleware
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/adlandh/response-dumper"
 	"github.com/labstack/echo/v4"
@@ -26,19 +24,7 @@ const (
 	tracerName = "github.com/adlandh/echo-otel-middleware"
 )
 
-var key = func(k, prefix string) attribute.Key {
-	k = strings.ToLower(k)
-	k = strings.ReplaceAll(k, "-", "_")
-	k = fmt.Sprintf("%s.%s", prefix, k)
-
-	return attribute.Key(k)
-}
-
 type BodySkipper func(echo.Context) (skipReqBody bool, skipRespBody bool)
-
-func defaultBodySkipper(echo.Context) (skipReqBody bool, skipRespBody bool) {
-	return
-}
 
 type (
 	// OtelConfig defines the config for OpenTelemetry middleware.
@@ -82,50 +68,28 @@ var (
 	}
 )
 
-// Middleware returns a OpenTelemetry middleware with default config
-func Middleware() echo.MiddlewareFunc {
-	return MiddlewareWithConfig(DefaultOtelConfig)
+// shouldSkipMiddleware determines if the middleware should be skipped.
+func shouldSkipMiddleware(c echo.Context, config OtelConfig) bool {
+	return config.Skipper(c) || c.Request() == nil || c.Response() == nil
 }
 
-// MiddlewareWithConfig returns a OpenTelemetry middleware with config.
-func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
-	var err error
+// processNextHandler calls the next handler and processes any errors.
+func processNextHandler(c echo.Context, next echo.HandlerFunc, config OtelConfig, span oteltrace.Span) error {
+	err := next(c)
+	if err != nil {
+		// Record error in span
+		span.RecordError(err)
+		setAttr(span, config, attribute.String("echo.error", err.Error()))
 
-	setDefaultValues(&config)
-
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			if config.Skipper(c) || c.Request() == nil || c.Response() == nil {
-				return next(c)
-			}
-
-			request, span, ctx, endSpan := createSpan(c, config)
-			defer endSpan()
-
-			skipReqBody, skipRespBody := config.BodySkipper(c)
-
-			respDumper := dumpReq(c, config, span, request, skipReqBody)
-
-			// setup request context - add opentracing span
-			c.SetRequest(request.WithContext(ctx))
-
-			// call next middleware / controller
-			err = next(c)
-			if err != nil {
-				span.RecordError(err)
-				setAttr(span, config, attribute.String("echo.error", err.Error()))
-				c.Error(err) // call custom registered error handler
-			}
-
-			dumpResp(c, config, span, respDumper, skipRespBody)
-
-			return err
-		}
+		// Call custom registered error handler
+		c.Error(err)
 	}
+
+	return err
 }
 
-func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request, skipReqBody bool) *response.Dumper {
-	// Add path parameters
+// addPathParameters adds path parameters to the span.
+func addPathParameters(c echo.Context, config OtelConfig, span oteltrace.Span) {
 	if path := c.Path(); path != "" {
 		setAttr(span, config, semconv.HTTPRoute(path))
 	}
@@ -133,6 +97,43 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 	for _, paramName := range c.ParamNames() {
 		setAttr(span, config, attribute.String("http.path."+paramName, c.Param(paramName)))
 	}
+}
+
+// dumpRequestBody reads and dumps the request body to the span.
+// It returns the request with the body reset for further processing.
+func dumpRequestBody(request *http.Request, config OtelConfig, span oteltrace.Span, skipReqBody bool) {
+	if request.Body == nil {
+		return
+	}
+
+	reqBody := []byte("[excluded]")
+
+	if !skipReqBody {
+		var err error
+
+		reqBody, err = io.ReadAll(request.Body)
+		if err == nil {
+			_ = request.Body.Close()
+			request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
+		}
+	}
+
+	setAttr(span, config, attribute.String("http.request.body", string(reqBody)))
+}
+
+// setupResponseDumper creates and sets up a response dumper.
+func setupResponseDumper(c echo.Context) *response.Dumper {
+	respDumper := response.NewDumper(c.Response().Writer)
+	c.Response().Writer = respDumper
+
+	return respDumper
+}
+
+// dumpReq processes the request for tracing, adding path parameters, headers, and body to the span.
+// It returns a response dumper if body dumping is enabled.
+func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request, skipReqBody bool) *response.Dumper {
+	// Add path parameters
+	addPathParameters(c, config, span)
 
 	// Dump request headers
 	if config.AreHeadersDump {
@@ -143,34 +144,18 @@ func dumpReq(c echo.Context, config OtelConfig, span oteltrace.Span, request *ht
 	var respDumper *response.Dumper
 
 	if config.IsBodyDump {
-		// request
-		if request.Body != nil {
-			reqBody := []byte("[excluded]")
+		// Dump request body
+		dumpRequestBody(request, config, span, skipReqBody)
 
-			if !skipReqBody {
-				var err error
-
-				reqBody, err = io.ReadAll(request.Body)
-				if err == nil {
-					_ = request.Body.Close()
-					request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
-				}
-			}
-
-			setAttr(span, config, attribute.String("http.request.body", string(reqBody)))
-		}
-
-		// response
-		respDumper = response.NewDumper(c.Response().Writer)
-		c.Response().Writer = respDumper
+		// Setup response dumper
+		respDumper = setupResponseDumper(c)
 	}
 
 	return respDumper
 }
 
-func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper *response.Dumper, skipRespBody bool) {
-	status := c.Response().Status
-
+// setSpanStatus sets the span status based on the HTTP status code.
+func setSpanStatus(span oteltrace.Span, status int) {
 	switch {
 	case status >= 400:
 		span.SetStatus(codes.Error, "")
@@ -179,51 +164,60 @@ func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper
 	default:
 		span.SetStatus(codes.Unset, "")
 	}
+}
 
+// dumpResponseHeaders dumps the response headers to the span.
+func dumpResponseHeaders(c echo.Context, config OtelConfig, span oteltrace.Span) {
+	if config.AreHeadersDump {
+		setAttr(span, config, dumpHeaders("http.response.headers", c.Response().Header())...)
+	}
+}
+
+// dumpResponseBody dumps the response body to the span.
+func dumpResponseBody(respDumper *response.Dumper, config OtelConfig, span oteltrace.Span, skipRespBody bool) {
+	respBody := respDumper.GetResponse()
+
+	if respBody != "" && skipRespBody {
+		respBody = "[excluded]"
+	}
+
+	setAttr(span, config, attribute.String("http.response.body", respBody))
+}
+
+// dumpResp processes the response for tracing, adding status, headers, and body to the span.
+func dumpResp(c echo.Context, config OtelConfig, span oteltrace.Span, respDumper *response.Dumper, skipRespBody bool) {
+	status := c.Response().Status
+
+	// Set span status based on HTTP status code
+	setSpanStatus(span, status)
+
+	// Add status code attribute if available
 	if status > 0 {
 		setAttr(span, config, semconv.HTTPResponseStatusCode(status))
 	}
 
 	// Dump response headers
-	if config.AreHeadersDump {
-		setAttr(span, config, dumpHeaders("http.response.headers", c.Response().Header())...)
-	}
+	dumpResponseHeaders(c, config, span)
 
 	// Dump response body
-	if config.IsBodyDump {
-		respBody := respDumper.GetResponse()
-
-		if respBody != "" && skipRespBody {
-			respBody = "[excluded]"
-		}
-
-		setAttr(span, config, attribute.String("http.response.body", respBody))
+	if config.IsBodyDump && respDumper != nil {
+		dumpResponseBody(respDumper, config, span, skipRespBody)
 	}
 }
 
-func createSpan(c echo.Context, config OtelConfig) (*http.Request, oteltrace.Span, context.Context, func()) {
-	tracer := config.TracerProvider.Tracer(tracerName)
-	c.Set(tracerKey, tracer)
-
-	request := c.Request()
-	savedCtx := request.Context()
-
-	opName := "HTTP " + request.Method + " URL: " + c.Path()
-	if c.Path() != request.RequestURI {
+// createSpanName creates a span name based on the HTTP method, path, and request URI.
+func createSpanName(request *http.Request, path string) string {
+	opName := "HTTP " + request.Method + " URL: " + path
+	if path != request.RequestURI {
 		opName = opName + " URI: " + request.RequestURI
 	}
 
-	realIP := c.RealIP()
-	requestID := getRequestID(c) // request-id generated by reverse-proxy
+	return opName
+}
 
-	var span oteltrace.Span
-
-	if request.URL == nil {
-		request.URL = &url.URL{}
-	}
-
-	ctx := config.Propagator.Extract(savedCtx, propagation.HeaderCarrier(request.Header))
-	opts := []oteltrace.SpanStartOption{
+// createSpanOptions creates span options with common HTTP attributes.
+func createSpanOptions(request *http.Request, realIP, requestID string) []oteltrace.SpanStartOption {
+	return []oteltrace.SpanStartOption{
 		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
 		oteltrace.WithAttributes(
 			attribute.String("client_ip", realIP),
@@ -235,8 +229,33 @@ func createSpan(c echo.Context, config OtelConfig) (*http.Request, oteltrace.Spa
 			attribute.String("http.scheme", request.URL.Scheme),
 		),
 	}
-	ctx, span = tracer.Start(ctx, opName, opts...)
+}
 
+// createSpan creates a new span for the request and returns the request, span, context, and a cleanup function.
+func createSpan(c echo.Context, config OtelConfig) (*http.Request, oteltrace.Span, context.Context, func()) {
+	tracer := config.TracerProvider.Tracer(tracerName)
+	c.Set(tracerKey, tracer)
+
+	request := c.Request()
+	savedCtx := request.Context()
+
+	// Ensure request.URL is not nil
+	if request.URL == nil {
+		request.URL = &url.URL{}
+	}
+
+	realIP := c.RealIP()
+	requestID := getRequestID(c)
+
+	// Extract propagated context
+	ctx := config.Propagator.Extract(savedCtx, propagation.HeaderCarrier(request.Header))
+
+	// Create span
+	opName := createSpanName(request, c.Path())
+	opts := createSpanOptions(request, realIP, requestID)
+	ctx, span := tracer.Start(ctx, opName, opts...)
+
+	// Return cleanup function
 	return request, span, ctx, func() {
 		request = request.WithContext(savedCtx)
 		c.SetRequest(request)
@@ -265,8 +284,49 @@ func setDefaultValues(config *OtelConfig) {
 func dumpHeaders(prefix string, h http.Header) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, len(h))
 	for k, v := range h {
-		attrs = append(attrs, key(k, prefix).StringSlice(v))
+		attrs = append(attrs, formatKey(k, prefix).StringSlice(v))
 	}
 
 	return attrs
+}
+
+// Middleware returns a OpenTelemetry middleware with default config
+func Middleware() echo.MiddlewareFunc {
+	return MiddlewareWithConfig(DefaultOtelConfig)
+}
+
+// MiddlewareWithConfig returns a OpenTelemetry middleware with config.
+func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
+	// Ensure default values are set
+	setDefaultValues(&config)
+
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip middleware if necessary
+			if shouldSkipMiddleware(c, config) {
+				return next(c)
+			}
+
+			// Create span for the request
+			request, span, ctx, endSpan := createSpan(c, config)
+			defer endSpan()
+
+			// Determine if request/response bodies should be skipped
+			skipReqBody, skipRespBody := config.BodySkipper(c)
+
+			// Process request for tracing
+			respDumper := dumpReq(c, config, span, request, skipReqBody)
+
+			// Setup request context with the span
+			c.SetRequest(request.WithContext(ctx))
+
+			// Call next middleware/controller and handle errors
+			err := processNextHandler(c, next, config, span)
+
+			// Process response for tracing
+			dumpResp(c, config, span, respDumper, skipRespBody)
+
+			return err
+		}
+	}
 }
