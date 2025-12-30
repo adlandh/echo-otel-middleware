@@ -17,7 +17,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/adlandh/echo-otel-middleware"
+	echootelmiddleware "github.com/adlandh/echo-otel-middleware"
 	"github.com/labstack/echo/v4"
 	"go.opentelemetry.io/otel"
 	stdout "go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
@@ -78,3 +78,15 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 	return tp, nil
 }
 ```
+
+## Options
+
+- `AreHeadersDump` (default: true): include request/response headers in span attributes.
+- `IsBodyDump` (default: false): include request/response bodies in span attributes.
+- `RemoveNewLines` (default: false): replace `\n` with spaces in attribute values.
+- `LimitNameSize` (default: 0): max tag name length in bytes, `<=0` means unlimited.
+- `LimitValueSize` (default: 0): max tag value length in bytes, `<=0` means unlimited.
+
+## Security
+
+Dumping headers or bodies can capture PII or secrets. Prefer `BodySkipper` to exclude sensitive endpoints or payloads.
