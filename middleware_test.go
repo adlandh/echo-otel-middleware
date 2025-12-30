@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	b3prop "go.opentelemetry.io/contrib/propagators/b3"
@@ -33,6 +34,16 @@ const (
 	methodTag    = "http.method"
 	routeTag     = "http.route"
 )
+
+func hasAttrPrefix(attrs []attribute.KeyValue, prefix string) bool {
+	for _, attr := range attrs {
+		if strings.HasPrefix(string(attr.Key), prefix) {
+			return true
+		}
+	}
+
+	return false
+}
 
 func TestGetSpanNotInstrumented(t *testing.T) {
 	router := echo.New()
@@ -281,6 +292,166 @@ func TestTrace200WithHeadersAndBodySkipped(t *testing.T) {
 	assert.Contains(t, attrs, attribute.String("http.request.body", "[excluded]"))
 	assert.Contains(t, attrs, attribute.String("http.response.body", "[excluded]"))
 	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.content_type", []string{"plain/text"}))
+}
+
+func TestCreateSpanName(t *testing.T) {
+	t.Run("same path and uri", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/ping", nil)
+		assert.Equal(t, "HTTP GET URL: /ping", createSpanName(r, "/ping"))
+	})
+
+	t.Run("different path and uri", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/user/123?active=true", nil)
+		assert.Equal(t, "HTTP GET URL: /user/:id URI: /user/123?active=true", createSpanName(r, "/user/:id"))
+	})
+}
+
+func TestSetSpanStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		statusCode int
+		wantCode   codes.Code
+	}{
+		{
+			name:       "1xx",
+			statusCode: http.StatusSwitchingProtocols,
+			wantCode:   codes.Unset,
+		},
+		{
+			name:       "2xx",
+			statusCode: http.StatusOK,
+			wantCode:   codes.Ok,
+		},
+		{
+			name:       "4xx",
+			statusCode: http.StatusBadRequest,
+			wantCode:   codes.Error,
+		},
+		{
+			name:       "5xx",
+			statusCode: http.StatusInternalServerError,
+			wantCode:   codes.Error,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sr := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+			tracer := provider.Tracer(tracerName)
+
+			_, span := tracer.Start(context.Background(), "test")
+			setSpanStatus(span, tc.statusCode)
+			span.End()
+
+			spans := sr.Ended()
+			require.Len(t, spans, 1)
+			assert.Equal(t, tc.wantCode, spans[0].Status().Code)
+		})
+	}
+}
+
+func TestShouldSkipMiddleware(t *testing.T) {
+	e := echo.New()
+
+	t.Run("nil request", func(t *testing.T) {
+		c := e.NewContext(httptest.NewRequest("GET", "/", nil), httptest.NewRecorder())
+		c.SetRequest(nil)
+		assert.True(t, shouldSkipMiddleware(c, OtelConfig{Skipper: middleware.DefaultSkipper}))
+	})
+
+	t.Run("nil response", func(t *testing.T) {
+		c := e.NewContext(httptest.NewRequest("GET", "/", nil), httptest.NewRecorder())
+		c.SetResponse(nil)
+		assert.True(t, shouldSkipMiddleware(c, OtelConfig{Skipper: middleware.DefaultSkipper}))
+	})
+
+	t.Run("skipper true", func(t *testing.T) {
+		c := e.NewContext(httptest.NewRequest("GET", "/", nil), httptest.NewRecorder())
+		cfg := OtelConfig{
+			Skipper: func(echo.Context) bool {
+				return true
+			},
+		}
+		assert.True(t, shouldSkipMiddleware(c, cfg))
+	})
+
+	t.Run("not skipped", func(t *testing.T) {
+		c := e.NewContext(httptest.NewRequest("GET", "/", nil), httptest.NewRecorder())
+		assert.False(t, shouldSkipMiddleware(c, OtelConfig{Skipper: middleware.DefaultSkipper}))
+	})
+}
+
+func TestHeadersDumpDisabled(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, AreHeadersDump: false}))
+	router.GET(userEndpoint, func(c echo.Context) error {
+		return c.String(http.StatusOK, userID)
+	})
+
+	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
+	r.Header.Set(echo.HeaderContentType, "plain/text")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	attrs := spans[0].Attributes()
+	assert.False(t, hasAttrPrefix(attrs, "http.request.headers."))
+	assert.False(t, hasAttrPrefix(attrs, "http.response.headers."))
+}
+
+func TestBodySkipperAsymmetric(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		skipReqBody  bool
+		skipRespBody bool
+		wantReqBody  string
+		wantRespBody string
+	}{
+		{
+			name:         "skip request only",
+			skipReqBody:  true,
+			skipRespBody: false,
+			wantReqBody:  "[excluded]",
+			wantRespBody: userID,
+		},
+		{
+			name:         "skip response only",
+			skipReqBody:  false,
+			skipRespBody: true,
+			wantReqBody:  "test",
+			wantRespBody: "[excluded]",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sr := tracetest.NewSpanRecorder()
+			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+			router := echo.New()
+			router.Use(MiddlewareWithConfig(OtelConfig{
+				TracerProvider: provider,
+				IsBodyDump:     true,
+				BodySkipper: func(echo.Context) (bool, bool) {
+					return tc.skipReqBody, tc.skipRespBody
+				},
+			}))
+			router.GET(userEndpoint, func(c echo.Context) error {
+				return c.String(http.StatusOK, userID)
+			})
+
+			r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, r)
+
+			spans := sr.Ended()
+			require.Len(t, spans, 1)
+			attrs := spans[0].Attributes()
+			assert.Contains(t, attrs, attribute.String("http.request.body", tc.wantReqBody))
+			assert.Contains(t, attrs, attribute.String("http.response.body", tc.wantRespBody))
+		})
+	}
 }
 
 func TestError(t *testing.T) {

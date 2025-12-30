@@ -311,8 +311,25 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			request, span, ctx, endSpan := createSpan(c, config)
 			defer endSpan()
 
+			// Skip attribute/body/header processing if span is not recording.
+			if !span.IsRecording() {
+				c.SetRequest(request.WithContext(ctx))
+
+				err := next(c)
+				if err != nil {
+					c.Error(err)
+				}
+
+				return err
+			}
+
 			// Determine if request/response bodies should be skipped
-			skipReqBody, skipRespBody := config.BodySkipper(c)
+			skipReqBody := false
+			skipRespBody := false
+
+			if config.IsBodyDump {
+				skipReqBody, skipRespBody = config.BodySkipper(c)
+			}
 
 			// Process request for tracing
 			respDumper := dumpReq(c, config, span, request, skipReqBody)

@@ -26,10 +26,6 @@ func limitString(str string, size int) string {
 
 	bytes := []byte(str)
 
-	if len(bytes) <= size {
-		return str
-	}
-
 	validBytes := bytes[:size]
 	for !utf8.Valid(validBytes) {
 		validBytes = validBytes[:len(validBytes)-1]
@@ -133,9 +129,16 @@ func setAttr(span trace.Span, config OtelConfig, attrs ...attribute.KeyValue) {
 // attribute keys or values contain non-ASCII characters, the resulting
 // attribute keys or values may be shorter than the given size.
 func prepareAttrs(config OtelConfig, attrs ...attribute.KeyValue) []attribute.KeyValue {
+	if config.LimitNameSize <= 0 && config.LimitValueSize <= 0 && !config.RemoveNewLines {
+		return attrs
+	}
+
 	for i := range attrs {
-		attrs[i].Key = attribute.Key(prepareTagName(string(attrs[i].Key), config.LimitNameSize))
-		if attrs[i].Value.Type() == attribute.STRING {
+		if config.LimitNameSize > 0 {
+			attrs[i].Key = attribute.Key(prepareTagName(string(attrs[i].Key), config.LimitNameSize))
+		}
+
+		if attrs[i].Value.Type() == attribute.STRING && (config.LimitValueSize > 0 || config.RemoveNewLines) {
 			attrs[i].Value = attribute.StringValue(prepareTagValue(attrs[i].Value.AsString(), config.LimitValueSize, config.RemoveNewLines))
 		}
 	}
