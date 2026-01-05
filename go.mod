@@ -1,11 +1,9 @@
 module github.com/adlandh/echo-otel-middleware
 
-go 1.24.0
-
-toolchain go1.24.1
+go 1.25
 
 require (
-	github.com/adlandh/response-dumper v1.1.1
+	github.com/adlandh/response-dumper v1.2.0
 	github.com/labstack/echo/v4 v4.14.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/propagators/b3 v1.39.0
