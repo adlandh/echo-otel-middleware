@@ -4,7 +4,7 @@ Echo OpenTelemetry middleware based on Jaeger tracing middleware
 ## Usage:
 
 ```shell
-go get github.com/adlandh/echo-otel-middleware
+go get github.com/adlandh/echo-otel-middleware/v2
 ```
 
 In your app:
@@ -17,8 +17,8 @@ import (
 	"log"
 	"net/http"
 
-	echootelmiddleware "github.com/adlandh/echo-otel-middleware"
-	"github.com/labstack/echo/v4"
+	echootelmiddleware "github.com/adlandh/echo-otel-middleware/v2"
+	"github.com/labstack/echo/v5"
 	"go.opentelemetry.io/otel"
 	stdout "go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
@@ -43,7 +43,7 @@ func main() {
 		AreHeadersDump: true, // dump request && response headers
 		IsBodyDump:     true, // dump request && response body
 		// No dump for gzip
-		BodySkipper: func(c echo.Context) (bool, bool) {
+		BodySkipper: func(c *echo.Context) (bool, bool) {
 			if c.Request().Header.Get("Content-Encoding") == "gzip" {
 				return true, true
 			}
@@ -52,11 +52,11 @@ func main() {
 	}))
 
 	// Add some endpoints
-	app.POST("/", func(c echo.Context) error {
+	app.POST("/", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "Hello, World!")
 	})
 
-	app.GET("/", func(c echo.Context) error {
+	app.GET("/", func(c *echo.Context) error {
 		return c.String(http.StatusOK, "Hello, World!")
 	})
 

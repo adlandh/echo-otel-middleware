@@ -1,11 +1,12 @@
 package echootelmiddleware
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -128,7 +129,7 @@ func TestGetRequestID(t *testing.T) {
 	e := echo.New()
 
 	t.Run("token in header", func(t *testing.T) {
-		r := httptest.NewRequest(echo.GET, "/", nil)
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.Header.Set(echo.HeaderXRequestID, "test")
 		w := httptest.NewRecorder()
 		c := e.NewContext(r, w)
@@ -138,7 +139,7 @@ func TestGetRequestID(t *testing.T) {
 
 	t.Run("generate token", func(t *testing.T) {
 		e.Use(middleware.RequestID())
-		r := httptest.NewRequest(echo.GET, "/", nil)
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		w := httptest.NewRecorder()
 		c := e.NewContext(r, w)
 		e.ServeHTTP(w, r)
