@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	b3prop "go.opentelemetry.io/contrib/propagators/b3"
@@ -47,7 +47,7 @@ func hasAttrPrefix(attrs []attribute.KeyValue, prefix string) bool {
 
 func TestGetSpanNotInstrumented(t *testing.T) {
 	router := echo.New()
-	router.GET("/ping", func(c echo.Context) error {
+	router.GET("/ping", func(c *echo.Context) error {
 		// Assert we don't have a span on the context.
 		span := trace.SpanFromContext(c.Request().Context())
 		ok := !span.SpanContext().IsValid()
@@ -79,7 +79,7 @@ func TestPropagationWithGlobalPropagators(t *testing.T) {
 
 	router := echo.New()
 	router.Use(Middleware())
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		span := trace.SpanFromContext(c.Request().Context())
 		assert.Equal(t, sc.TraceID(), span.SpanContext().TraceID())
 		assert.Equal(t, sc.SpanID(), span.SpanContext().SpanID())
@@ -113,7 +113,7 @@ func TestPropagationWithCustomPropagators(t *testing.T) {
 		TracerProvider: provider,
 		Propagator:     b3,
 	}))
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		span := trace.SpanFromContext(c.Request().Context())
 		assert.Equal(t, sc.TraceID(), span.SpanContext().TraceID())
 		assert.Equal(t, sc.SpanID(), span.SpanContext().SpanID())
@@ -128,13 +128,13 @@ func TestSkipper(t *testing.T) {
 	r := httptest.NewRequest("GET", "/ping", nil)
 	w := httptest.NewRecorder()
 
-	skipper := func(c echo.Context) bool {
+	skipper := func(c *echo.Context) bool {
 		return c.Request().RequestURI == "/ping"
 	}
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{Skipper: skipper}))
-	router.GET("/ping", func(c echo.Context) error {
+	router.GET("/ping", func(c *echo.Context) error {
 		span := trace.SpanFromContext(c.Request().Context())
 		assert.False(t, span.SpanContext().HasSpanID())
 		assert.False(t, span.SpanContext().HasTraceID())
@@ -152,7 +152,7 @@ func TestChildSpanFromGlobalTracer(t *testing.T) {
 
 	router := echo.New()
 	router.Use(Middleware())
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 
@@ -170,7 +170,7 @@ func TestChildSpanFromCustomTracer(t *testing.T) {
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider}))
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		return c.NoContent(http.StatusOK)
 	})
 
@@ -188,7 +188,7 @@ func TestTrace200(t *testing.T) {
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider}))
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
@@ -220,7 +220,7 @@ func TestTrace200WithHeadersAndBody(t *testing.T) {
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true, AreHeadersDump: true}))
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
@@ -259,8 +259,8 @@ func TestTrace200WithHeadersAndBodySkipped(t *testing.T) {
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
 
 	router := echo.New()
-	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true, AreHeadersDump: true, BodySkipper: func(echo.Context) (bool, bool) { return true, true }}))
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true, AreHeadersDump: true, BodySkipper: func(*echo.Context) (bool, bool) { return true, true }}))
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
@@ -367,7 +367,7 @@ func TestShouldSkipMiddleware(t *testing.T) {
 	t.Run("skipper true", func(t *testing.T) {
 		c := e.NewContext(httptest.NewRequest("GET", "/", nil), httptest.NewRecorder())
 		cfg := OtelConfig{
-			Skipper: func(echo.Context) bool {
+			Skipper: func(*echo.Context) bool {
 				return true
 			},
 		}
@@ -386,7 +386,7 @@ func TestHeadersDumpDisabled(t *testing.T) {
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, AreHeadersDump: false}))
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		return c.String(http.StatusOK, userID)
 	})
 
@@ -433,11 +433,11 @@ func TestBodySkipperAsymmetric(t *testing.T) {
 			router.Use(MiddlewareWithConfig(OtelConfig{
 				TracerProvider: provider,
 				IsBodyDump:     true,
-				BodySkipper: func(echo.Context) (bool, bool) {
+				BodySkipper: func(*echo.Context) (bool, bool) {
 					return tc.skipReqBody, tc.skipRespBody
 				},
 			}))
-			router.GET(userEndpoint, func(c echo.Context) error {
+			router.GET(userEndpoint, func(c *echo.Context) error {
 				return c.String(http.StatusOK, userID)
 			})
 
@@ -464,7 +464,7 @@ func TestError(t *testing.T) {
 	wantErr := errors.New("oh no")
 	// configure a handler that returns an error and 5xx status
 	// code
-	router.GET("/server_err", func(c echo.Context) error {
+	router.GET("/server_err", func(c *echo.Context) error {
 		return wantErr
 	})
 	r := httptest.NewRequest("GET", "/server_err", nil)
@@ -492,14 +492,14 @@ func TestStatusError(t *testing.T) {
 		echoError  string
 		statusCode int
 		spanCode   codes.Code
-		handler    func(c echo.Context) error
+		handler    func(c *echo.Context) error
 	}{
 		{
 			name:       "StandardError",
 			echoError:  "oh no",
 			statusCode: http.StatusInternalServerError,
 			spanCode:   codes.Error,
-			handler: func(c echo.Context) error {
+			handler: func(c *echo.Context) error {
 				return errors.New("oh no")
 			},
 		},
@@ -508,7 +508,7 @@ func TestStatusError(t *testing.T) {
 			echoError:  "code=500, message=my error message",
 			statusCode: http.StatusInternalServerError,
 			spanCode:   codes.Error,
-			handler: func(c echo.Context) error {
+			handler: func(c *echo.Context) error {
 				return echo.NewHTTPError(http.StatusInternalServerError, "my error message")
 			},
 		},
@@ -517,7 +517,7 @@ func TestStatusError(t *testing.T) {
 			echoError:  "code=400, message=my error message",
 			statusCode: http.StatusBadRequest,
 			spanCode:   codes.Error,
-			handler: func(c echo.Context) error {
+			handler: func(c *echo.Context) error {
 				return echo.NewHTTPError(http.StatusBadRequest, "my error message")
 			},
 		},
@@ -554,7 +554,7 @@ func TestErrorNotSwallowedByMiddleware(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/err", nil)
 	w := httptest.NewRecorder()
 	c := e.NewContext(r, w)
-	h := Middleware()(func(c echo.Context) error {
+	h := Middleware()(func(c *echo.Context) error {
 		return assert.AnError
 	})
 
@@ -565,7 +565,7 @@ func TestErrorNotSwallowedByMiddleware(t *testing.T) {
 func BenchmarkWithMiddleware(b *testing.B) {
 	router := echo.New()
 	router.Use(Middleware())
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
@@ -584,7 +584,7 @@ func BenchmarkWithMiddleware(b *testing.B) {
 func BenchmarkWithMiddlewareWithNoBodyNoHeaders(b *testing.B) {
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{AreHeadersDump: false}))
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
@@ -603,7 +603,7 @@ func BenchmarkWithMiddlewareWithNoBodyNoHeaders(b *testing.B) {
 func BenchmarkWithMiddlewareWithBodyDump(b *testing.B) {
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{IsBodyDump: true}))
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
@@ -621,7 +621,7 @@ func BenchmarkWithMiddlewareWithBodyDump(b *testing.B) {
 
 func BenchmarkWithoutMiddleware(b *testing.B) {
 	router := echo.New()
-	router.GET(userEndpoint, func(c echo.Context) error {
+	router.GET(userEndpoint, func(c *echo.Context) error {
 		id := c.Param("id")
 		return c.String(http.StatusOK, id)
 	})
