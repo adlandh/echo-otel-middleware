@@ -1,4 +1,8 @@
-# echo-otel-middleware
+# Echo OTel Middleware
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/adlandh/echo-otel-middleware.svg)](https://pkg.go.dev/github.com/adlandh/echo-otel-middleware)
+[![Go Report Card](https://goreportcard.com/badge/github.com/adlandh/echo-otel-middleware)](https://goreportcard.com/report/github.com/adlandh/echo-otel-middleware)
+
 Echo OpenTelemetry middleware based on Jaeger tracing middleware
 
 ## Usage:
