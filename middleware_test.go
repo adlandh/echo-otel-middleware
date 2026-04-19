@@ -572,7 +572,7 @@ func TestNilRequestBodyWithBodyDump(t *testing.T) {
 		return c.String(http.StatusOK, userID)
 	})
 
-	r := httptest.NewRequest("GET", userURL, nil)
+	r := httptest.NewRequest("GET", userURL, http.NoBody)
 	r.Body = nil // ensure nil body
 	w := httptest.NewRecorder()
 
@@ -605,7 +605,7 @@ func TestEmptyResponseBodyExcluded(t *testing.T) {
 		return c.NoContent(http.StatusOK)
 	})
 
-	r := httptest.NewRequest("GET", userURL, nil)
+	r := httptest.NewRequest("GET", userURL, http.NoBody)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
 
@@ -627,7 +627,7 @@ func TestNonRecordingSpanBranch(t *testing.T) {
 		return c.String(http.StatusOK, userID)
 	})
 
-	r := httptest.NewRequest("GET", userURL, nil)
+	r := httptest.NewRequest("GET", userURL, http.NoBody)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
 
@@ -638,11 +638,11 @@ func TestNonRecordingSpanBranch(t *testing.T) {
 func TestNonRecordingSpanErrorPropagated(t *testing.T) {
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: noop.NewTracerProvider()}))
-	router.GET("/err", func(c *echo.Context) error {
+	router.GET("/err", func(_ *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad request")
 	})
 
-	r := httptest.NewRequest("GET", "/err", nil)
+	r := httptest.NewRequest("GET", "/err", http.NoBody)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
 
@@ -651,7 +651,7 @@ func TestNonRecordingSpanErrorPropagated(t *testing.T) {
 
 func TestResponseStatusNoDumperNoError(t *testing.T) {
 	e := echo.New()
-	c := e.NewContext(httptest.NewRequest("GET", "/", nil), httptest.NewRecorder())
+	c := e.NewContext(httptest.NewRequest("GET", "/", http.NoBody), httptest.NewRecorder())
 	// Response has not been written; echo.UnwrapResponse should still succeed
 	// and return the current status (0 before any write).
 	status := responseStatus(c, nil, nil)
