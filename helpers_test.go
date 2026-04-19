@@ -125,6 +125,72 @@ func TestPrepareAttrs(t *testing.T) {
 	require.Equal(t, int64(3), attrs[1].Value.AsInt64())
 }
 
+func TestFormatKey(t *testing.T) {
+	t.Run("lowercase and replaces hyphens with underscores", func(t *testing.T) {
+		require.Equal(t, attribute.Key("http.request.headers.content_type"), formatKey("Content-Type", "http.request.headers"))
+	})
+
+	t.Run("no hyphens no change", func(t *testing.T) {
+		require.Equal(t, attribute.Key("http.request.headers.accept"), formatKey("Accept", "http.request.headers"))
+	})
+
+	t.Run("multiple hyphens", func(t *testing.T) {
+		require.Equal(t, attribute.Key("http.response.headers.x_request_id"), formatKey("X-Request-ID", "http.response.headers"))
+	})
+}
+
+func TestLimitStringEdgeCases(t *testing.T) {
+	t.Run("size zero returns original", func(t *testing.T) {
+		require.Equal(t, "abc", limitString("abc", 0))
+	})
+
+	t.Run("negative size returns original", func(t *testing.T) {
+		require.Equal(t, "abc", limitString("abc", -5))
+	})
+
+	t.Run("empty string", func(t *testing.T) {
+		require.Equal(t, "", limitString("", 10))
+	})
+
+	t.Run("empty string with zero size", func(t *testing.T) {
+		require.Equal(t, "", limitString("", 0))
+	})
+}
+
+func TestLimitStringWithDotsUTF8(t *testing.T) {
+	// "abcdefgh" + euro sign (3 bytes) + "ij". Total = 13 bytes.
+	// With size=11, size-3=8 truncates cleanly at "abcdefgh".
+	input := "abcdefgh" + string([]byte{0xe2, 0x82, 0xac}) + "ij"
+	require.Equal(t, "abcdefgh...", limitStringWithDots(input, 11))
+
+	// size=12, size-3=9 falls into middle of the 3-byte euro rune;
+	// limitString trims it off, yielding "abcdefgh" + "...".
+	require.Equal(t, "abcdefgh...", limitStringWithDots(input, 12))
+}
+
+func TestPrepareAttrsFastPath(t *testing.T) {
+	cfg := OtelConfig{} // no limits, no newline removal
+
+	in := []attribute.KeyValue{
+		attribute.String("keyName", "a\nbcdef"),
+		attribute.Int("intKey", 7),
+	}
+
+	out := prepareAttrs(cfg, in...)
+
+	require.Len(t, out, 2)
+	require.Equal(t, attribute.Key("keyName"), out[0].Key)
+	require.Equal(t, "a\nbcdef", out[0].Value.AsString())
+	require.Equal(t, attribute.Key("intKey"), out[1].Key)
+	require.Equal(t, int64(7), out[1].Value.AsInt64())
+}
+
+func TestDefaultBodySkipper(t *testing.T) {
+	skipReq, skipResp := defaultBodySkipper(nil)
+	require.False(t, skipReq)
+	require.False(t, skipResp)
+}
+
 func TestGetRequestID(t *testing.T) {
 	e := echo.New()
 

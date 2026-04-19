@@ -1,7 +1,6 @@
 package echootelmiddleware
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -152,9 +151,8 @@ func prepareAttrs(config OtelConfig, attrs ...attribute.KeyValue) []attribute.Ke
 func formatKey(k, prefix string) attribute.Key {
 	k = strings.ToLower(k)
 	k = strings.ReplaceAll(k, "-", "_")
-	k = fmt.Sprintf("%s.%s", prefix, k)
 
-	return attribute.Key(k)
+	return attribute.Key(prefix + "." + k)
 }
 
 func defaultBodySkipper(_ *echo.Context) (skipReqBody bool, skipRespBody bool) {

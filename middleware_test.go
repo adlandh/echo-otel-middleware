@@ -562,6 +562,162 @@ func TestErrorNotSwallowedByMiddleware(t *testing.T) {
 	assert.Equal(t, assert.AnError, err)
 }
 
+func TestNilRequestBodyWithBodyDump(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true}))
+	router.GET(userEndpoint, func(c *echo.Context) error {
+		return c.String(http.StatusOK, userID)
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	r.Body = nil // ensure nil body
+	w := httptest.NewRecorder()
+
+	require.NotPanics(t, func() {
+		router.ServeHTTP(w, r)
+	})
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	attrs := spans[0].Attributes()
+	// No http.request.body attribute should be set for a nil request body.
+	for _, attr := range attrs {
+		assert.NotEqual(t, attribute.Key("http.request.body"), attr.Key)
+	}
+}
+
+func TestEmptyResponseBodyExcluded(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{
+		TracerProvider: provider,
+		IsBodyDump:     true,
+		BodySkipper: func(*echo.Context) (bool, bool) {
+			return false, true
+		},
+	}))
+	router.GET(userEndpoint, func(c *echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	attrs := spans[0].Attributes()
+	assert.Contains(t, attrs, attribute.String("http.response.body", "[excluded]"))
+}
+
+func TestNonRecordingSpanBranch(t *testing.T) {
+	router := echo.New()
+	// noop tracer provider produces non-recording spans.
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: noop.NewTracerProvider()}))
+
+	var handlerCalled bool
+
+	router.GET(userEndpoint, func(c *echo.Context) error {
+		handlerCalled = true
+		return c.String(http.StatusOK, userID)
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	assert.True(t, handlerCalled)
+	assert.Equal(t, http.StatusOK, w.Result().StatusCode)
+}
+
+func TestNonRecordingSpanErrorPropagated(t *testing.T) {
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: noop.NewTracerProvider()}))
+	router.GET("/err", func(c *echo.Context) error {
+		return echo.NewHTTPError(http.StatusBadRequest, "bad request")
+	})
+
+	r := httptest.NewRequest("GET", "/err", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+}
+
+func TestResponseStatusNoDumperNoError(t *testing.T) {
+	e := echo.New()
+	c := e.NewContext(httptest.NewRequest("GET", "/", nil), httptest.NewRecorder())
+	// Response has not been written; echo.UnwrapResponse should still succeed
+	// and return the current status (0 before any write).
+	status := responseStatus(c, nil, nil)
+	assert.Equal(t, 0, status)
+}
+
+func TestPathParameterAttribute(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider}))
+	router.GET(userEndpoint, func(c *echo.Context) error {
+		return c.String(http.StatusOK, c.Param("id"))
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	attrs := spans[0].Attributes()
+	assert.Contains(t, attrs, attribute.String("http.path.id", userID))
+}
+
+// failingReader is an io.ReadCloser that always returns an error on Read.
+type failingReader struct{}
+
+func (failingReader) Read(_ []byte) (int, error) { return 0, errors.New("boom") }
+func (failingReader) Close() error               { return nil }
+
+func TestDumpRequestBodyReadError(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true}))
+	router.GET(userEndpoint, func(c *echo.Context) error {
+		return c.String(http.StatusOK, userID)
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	r.Body = failingReader{}
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	span := spans[0]
+	attrs := span.Attributes()
+	assert.Contains(t, attrs, attribute.String("http.request.body", "[read-error]"))
+
+	// The read error should be recorded as a span event.
+	var found bool
+
+	for _, ev := range span.Events() {
+		if ev.Name == "exception" {
+			found = true
+			break
+		}
+	}
+
+	assert.True(t, found, "expected an exception event for the read error")
+}
+
 func BenchmarkWithMiddleware(b *testing.B) {
 	router := echo.New()
 	router.Use(Middleware())
