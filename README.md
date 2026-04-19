@@ -85,11 +85,15 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 
 ## Options
 
+- `TracerProvider` (default: `otel.GetTracerProvider()`): OpenTelemetry tracer provider.
+- `Propagator` (default: `otel.GetTextMapPropagator()`): text map propagator used to extract the parent context from request headers.
+- `Skipper` (default: `middleware.DefaultSkipper`): function to skip the middleware entirely for a request.
+- `BodySkipper` (default: no-op): function `func(*echo.Context) (skipReqBody, skipRespBody bool)` to exclude request and/or response bodies per request. Only consulted when `IsBodyDump` is true.
 - `AreHeadersDump` (default: true): include request/response headers in span attributes.
 - `IsBodyDump` (default: false): include request/response bodies in span attributes.
-- `RemoveNewLines` (default: false): replace `\n` with spaces in attribute values.
-- `LimitNameSize` (default: 0): max tag name length in bytes, `<=0` means unlimited.
-- `LimitValueSize` (default: 0): max tag value length in bytes, `<=0` means unlimited.
+- `RemoveNewLines` (default: false): replace `\n` with spaces in string attribute values (useful for Sentry).
+- `LimitNameSize` (default: 0): max attribute name length in bytes; `<=0` means unlimited. Sentry caps at 32.
+- `LimitValueSize` (default: 0): max attribute value length in bytes; `<=0` means unlimited. Values longer than the limit are truncated with a trailing `...` when the limit is greater than 10. Sentry caps at 200.
 
 ## Security
 
