@@ -668,7 +668,7 @@ func TestPathParameterAttribute(t *testing.T) {
 		return c.String(http.StatusOK, c.Param("id"))
 	})
 
-	r := httptest.NewRequest("GET", userURL, nil)
+	r := httptest.NewRequest("GET", userURL, http.NoBody)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
 
@@ -694,7 +694,7 @@ func TestDumpRequestBodyReadError(t *testing.T) {
 		return c.String(http.StatusOK, userID)
 	})
 
-	r := httptest.NewRequest("GET", userURL, nil)
+	r := httptest.NewRequest("GET", userURL, http.NoBody)
 	r.Body = failingReader{}
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
