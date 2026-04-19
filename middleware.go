@@ -74,6 +74,13 @@ func shouldSkipMiddleware(c *echo.Context, config OtelConfig) bool {
 	return config.Skipper(c) || c.Request() == nil || c.Response() == nil
 }
 
+// invokeErrorHandler invokes the Echo HTTPErrorHandler when available.
+func invokeErrorHandler(c *echo.Context, err error) {
+	if c.Echo() != nil {
+		c.Echo().HTTPErrorHandler(c, err)
+	}
+}
+
 // processNextHandler calls the next handler and processes any errors.
 func processNextHandler(c *echo.Context, next echo.HandlerFunc, config OtelConfig, span oteltrace.Span) error {
 	err := next(c)
@@ -83,9 +90,7 @@ func processNextHandler(c *echo.Context, next echo.HandlerFunc, config OtelConfi
 		setAttr(span, config, attribute.String("echo.error", err.Error()))
 
 		// Call custom registered error handler
-		if c.Echo() != nil {
-			c.Echo().HTTPErrorHandler(c, err)
-		}
+		invokeErrorHandler(c, err)
 	}
 
 	return err
@@ -112,10 +117,13 @@ func dumpRequestBody(request *http.Request, config OtelConfig, span oteltrace.Sp
 	reqBody := []byte("[excluded]")
 
 	if !skipReqBody {
-		var err error
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			span.RecordError(err)
 
-		reqBody, err = io.ReadAll(request.Body)
-		if err == nil {
+			reqBody = []byte("[read-error]")
+		} else {
+			reqBody = body
 			_ = request.Body.Close()
 			request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
 		}
@@ -180,7 +188,7 @@ func dumpResponseHeaders(c *echo.Context, config OtelConfig, span oteltrace.Span
 func dumpResponseBody(respDumper *response.Dumper, config OtelConfig, span oteltrace.Span, skipRespBody bool) {
 	respBody := respDumper.GetResponse()
 
-	if respBody != "" && skipRespBody {
+	if skipRespBody {
 		respBody = "[excluded]"
 	}
 
@@ -340,9 +348,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 
 				err := next(c)
 				if err != nil {
-					if c.Echo() != nil {
-						c.Echo().HTTPErrorHandler(c, err)
-					}
+					invokeErrorHandler(c, err)
 				}
 
 				return err
