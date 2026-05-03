@@ -1,3 +1,8 @@
+---
+name: golang-echo-otel-middleware
+description: Use when adding or configuring github.com/adlandh/echo-otel-middleware/v2 in a Go Echo application, or when writing examples for this middleware.
+---
+
 # Skill: golang-echo-otel-middleware
 
 Use this skill when adding or configuring `github.com/adlandh/echo-otel-middleware/v2` in a Go Echo application, or when writing examples for this middleware.
