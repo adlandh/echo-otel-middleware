@@ -989,6 +989,25 @@ func TestRecordPanicWithErrorValue(t *testing.T) {
 	assert.Contains(t, spans[0].Status().Description, "kaboom-as-error")
 }
 
+func TestRequestIDAttribute(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider}))
+	router.GET(userEndpoint, func(c *echo.Context) error {
+		return c.String(http.StatusOK, userID)
+	})
+
+	r := httptest.NewRequest("GET", userURL, http.NoBody)
+	r.Header.Set(echo.HeaderXRequestID, "req-abc-123")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	attrs := sr.Ended()[0].Attributes()
+	assert.Contains(t, attrs, attribute.String("http.request.id", "req-abc-123"))
+}
+
 func TestIsTextualContentTypeXMLSuffix(t *testing.T) {
 	assert.True(t, isTextualContentType("application/atom+xml"))
 	assert.True(t, isTextualContentType("application/vnd.api+json"))

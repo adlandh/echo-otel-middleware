@@ -265,16 +265,11 @@ func dumpResponseHeaders(c *echo.Context, config OtelConfig, span oteltrace.Span
 	}
 }
 
-// dumpResponseBody dumps the response body to the span.
-func dumpResponseBody(c *echo.Context, respDumper *response.Dumper, config OtelConfig, span oteltrace.Span, skipRespBody bool) {
-	var respBody string
-
-	switch {
-	case skipRespBody:
-		respBody = bodyExcluded
-	case !isTextualContentType(c.Response().Header().Get(echo.HeaderContentType)):
-		respBody = bodyNonText
-	default:
+// dumpResponseBody dumps the response body to the span. Only called when a
+// response dumper was installed, which implies the body was not skipped.
+func dumpResponseBody(c *echo.Context, respDumper *response.Dumper, config OtelConfig, span oteltrace.Span) {
+	respBody := bodyNonText
+	if isTextualContentType(c.Response().Header().Get(echo.HeaderContentType)) {
 		respBody = strings.ToValidUTF8(respDumper.GetResponse(), "")
 		if config.MaxBodyDumpSize > 0 && int64(len(respBody)) > config.MaxBodyDumpSize {
 			respBody = respBody[:config.MaxBodyDumpSize] + bodyTruncated
@@ -305,7 +300,7 @@ func dumpResp(c *echo.Context, config OtelConfig, span oteltrace.Span, respDumpe
 	if config.IsBodyDump {
 		switch {
 		case respDumper != nil:
-			dumpResponseBody(c, respDumper, config, span, skipRespBody)
+			dumpResponseBody(c, respDumper, config, span)
 		case skipRespBody:
 			setAttr(span, config, attribute.String(attrResponseBody, bodyExcluded))
 		}
