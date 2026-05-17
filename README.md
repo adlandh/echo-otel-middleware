@@ -88,13 +88,15 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 - `TracerProvider` (default: `otel.GetTracerProvider()`): OpenTelemetry tracer provider.
 - `Propagator` (default: `otel.GetTextMapPropagator()`): text map propagator used to extract the parent context from request headers.
 - `Skipper` (default: `middleware.DefaultSkipper`): function to skip the middleware entirely for a request.
-- `BodySkipper` (default: no-op): function `func(*echo.Context) (skipReqBody, skipRespBody bool)` to exclude request and/or response bodies per request. Only consulted when `IsBodyDump` is true.
-- `AreHeadersDump` (default: true): include request/response headers in span attributes.
-- `IsBodyDump` (default: false): include request/response bodies in span attributes.
+- `BodySkipper` (default: skips request body for non-textual Content-Types like `multipart/*` and `application/octet-stream`): `func(*echo.Context) (skipReqBody, skipRespBody bool)` to exclude request and/or response bodies per request. Only consulted when `IsBodyDump` is true.
+- `HeaderSkipper` (default: redacts `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `X-Api-Key`): `func(name string) bool` reporting whether a header (canonical MIME name) should be redacted from span attributes. Redacted headers are recorded with value `[redacted]`.
+- `AreHeadersDump` (default: false; true in `DefaultOtelConfig`): include request/response headers in span attributes.
+- `IsBodyDump` (default: false): include request/response bodies in span attributes. Non-textual response bodies are recorded as `[non-text content]`.
+- `MaxBodyDumpSize` (default: 64 KiB): cap, in bytes, on how much of the request/response body is buffered for attribute capture. Bodies larger than the cap are truncated with a trailing `[truncated]` marker; the handler still receives the full request body. Set to `<0` for unlimited (unsafe: a large upload can exhaust memory).
 - `RemoveNewLines` (default: false): replace `\n` with spaces in string attribute values (useful for Sentry).
 - `LimitNameSize` (default: 0): max attribute name length in bytes; `<=0` means unlimited. Sentry caps at 32.
 - `LimitValueSize` (default: 0): max attribute value length in bytes; `<=0` means unlimited. Values longer than the limit are truncated with a trailing `...` when the limit is greater than 10. Sentry caps at 200.
 
 ## Security
 
-Dumping headers or bodies can capture PII or secrets. Prefer `BodySkipper` to exclude sensitive endpoints or payloads.
+Dumping headers or bodies can capture PII or secrets. The default `HeaderSkipper` redacts common credential-bearing headers, and `MaxBodyDumpSize` bounds how much of each body is buffered. Use `BodySkipper` to exclude sensitive endpoints or payloads, and extend `HeaderSkipper` if your service uses additional secret headers.
