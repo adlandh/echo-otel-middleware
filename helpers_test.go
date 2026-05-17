@@ -186,15 +186,44 @@ func TestPrepareAttrsFastPath(t *testing.T) {
 }
 
 func TestDefaultBodySkipper(t *testing.T) {
-	skipReq, skipResp := defaultBodySkipper(nil)
-	require.False(t, skipReq)
-	require.False(t, skipResp)
+	e := echo.New()
+
+	t.Run("nil context", func(t *testing.T) {
+		skipReq, skipResp := defaultBodySkipper(nil)
+		require.False(t, skipReq)
+		require.False(t, skipResp)
+	})
+
+	t.Run("textual content type", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
+		r.Header.Set(echo.HeaderContentType, "application/json")
+		c := e.NewContext(r, httptest.NewRecorder())
+		skipReq, skipResp := defaultBodySkipper(c)
+		require.False(t, skipReq)
+		require.False(t, skipResp)
+	})
+
+	t.Run("binary content type is skipped", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
+		r.Header.Set(echo.HeaderContentType, "multipart/form-data; boundary=x")
+		c := e.NewContext(r, httptest.NewRecorder())
+		skipReq, skipResp := defaultBodySkipper(c)
+		require.True(t, skipReq)
+		require.False(t, skipResp)
+	})
+
+	t.Run("missing content type is skipped", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
+		c := e.NewContext(r, httptest.NewRecorder())
+		skipReq, skipResp := defaultBodySkipper(c)
+		require.True(t, skipReq)
+		require.False(t, skipResp)
+	})
 }
 
 func TestGetRequestID(t *testing.T) {
-	e := echo.New()
-
 	t.Run("token in header", func(t *testing.T) {
+		e := echo.New()
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.Header.Set(echo.HeaderXRequestID, "test")
 		w := httptest.NewRecorder()
@@ -204,6 +233,7 @@ func TestGetRequestID(t *testing.T) {
 	})
 
 	t.Run("generate token", func(t *testing.T) {
+		e := echo.New()
 		e.Use(middleware.RequestID())
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		w := httptest.NewRecorder()

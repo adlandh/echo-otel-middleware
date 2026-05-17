@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/adlandh/response-dumper"
 	"github.com/labstack/echo/v5"
@@ -27,6 +29,10 @@ const (
 
 type BodySkipper func(*echo.Context) (skipReqBody bool, skipRespBody bool)
 
+// HeaderSkipper reports whether the named header should be omitted from span
+// attributes. The name is passed in its canonical (MIME) form.
+type HeaderSkipper func(name string) bool
+
 type (
 	// OtelConfig defines the config for OpenTelemetry middleware.
 	OtelConfig struct {
@@ -35,6 +41,11 @@ type (
 
 		// BodySkipper defines a function to exclude body from logging
 		BodySkipper BodySkipper
+
+		// HeaderSkipper redacts sensitive headers from span attributes.
+		// The default denies Authorization, Cookie, Set-Cookie,
+		// Proxy-Authorization, and X-Api-Key.
+		HeaderSkipper HeaderSkipper
 
 		// OpenTelemetry TracerProvider
 		TracerProvider oteltrace.TracerProvider
@@ -56,7 +67,24 @@ type (
 
 		// Tag value limit size (in bytes). <=0 for unlimited, for sentry use 200
 		LimitValueSize int
+
+		// MaxBodyDumpSize caps the number of bytes buffered from the request or
+		// response body when IsBodyDump is enabled. Set to <0 for unlimited
+		// (unsafe: a large upload can exhaust memory). Default is 64 KiB.
+		MaxBodyDumpSize int64
 	}
+)
+
+const defaultMaxBodyDumpSize int64 = 64 * 1024
+
+// Attribute keys and marker values shared by request/response body dumps.
+const (
+	attrRequestBody  = "http.request.body"
+	attrResponseBody = "http.response.body"
+	bodyExcluded     = "[excluded]"
+	bodyReadError    = "[read-error]"
+	bodyTruncated    = "[truncated]"
+	bodyNonText      = "[non-text content]"
 )
 
 var (
@@ -74,62 +102,108 @@ func shouldSkipMiddleware(c *echo.Context, config OtelConfig) bool {
 	return config.Skipper(c) || c.Request() == nil || c.Response() == nil
 }
 
-// invokeErrorHandler invokes the Echo HTTPErrorHandler when available.
-func invokeErrorHandler(c *echo.Context, err error) {
-	if c.Echo() != nil {
-		c.Echo().HTTPErrorHandler(c, err)
-	}
-}
-
-// processNextHandler calls the next handler and processes any errors.
+// processNextHandler calls the next handler and records any error on the span.
+// The error is returned unchanged so Echo's router invokes HTTPErrorHandler
+// exactly once.
 func processNextHandler(c *echo.Context, next echo.HandlerFunc, config OtelConfig, span oteltrace.Span) error {
 	err := next(c)
 	if err != nil {
-		// Record error in span
 		span.RecordError(err)
 		setAttr(span, config, attribute.String("echo.error", err.Error()))
-
-		// Call custom registered error handler
-		invokeErrorHandler(c, err)
 	}
 
 	return err
 }
 
-// addPathParameters adds path parameters to the span.
+// addPathParameters adds the matched route and any path parameters to the
+// span in a single SetAttributes call.
 func addPathParameters(c *echo.Context, config OtelConfig, span oteltrace.Span) {
-	if path := c.Path(); path != "" {
-		setAttr(span, config, semconv.HTTPRoute(path))
+	params := c.RouteInfo().Parameters
+	path := c.Path()
+
+	if path == "" && len(params) == 0 {
+		return
 	}
 
-	for _, paramName := range c.RouteInfo().Parameters {
-		setAttr(span, config, attribute.String("http.path."+paramName, c.Param(paramName)))
+	attrs := make([]attribute.KeyValue, 0, len(params)+1)
+	if path != "" {
+		attrs = append(attrs, semconv.HTTPRoute(path))
 	}
+
+	for _, paramName := range params {
+		attrs = append(attrs, attribute.String("http.path."+paramName, c.Param(paramName)))
+	}
+
+	setAttr(span, config, attrs...)
 }
 
-// dumpRequestBody reads and dumps the request body to the span.
-// It returns the request with the body reset for further processing.
+// teeReadCloser preserves the original body's Close while reading from a
+// MultiReader. Used when the request body exceeds MaxBodyDumpSize so the
+// handler can still consume the remaining bytes.
+type teeReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// dumpRequestBody reads (up to MaxBodyDumpSize bytes of) the request body and
+// attaches it to the span. The original body is reset so the handler still
+// sees the full payload.
 func dumpRequestBody(request *http.Request, config OtelConfig, span oteltrace.Span, skipReqBody bool) {
 	if request.Body == nil {
 		return
 	}
 
-	reqBody := []byte("[excluded]")
+	if skipReqBody {
+		setAttr(span, config, attribute.String(attrRequestBody, bodyExcluded))
+		return
+	}
 
-	if !skipReqBody {
-		body, err := io.ReadAll(request.Body)
-		if err != nil {
-			span.RecordError(err)
+	origBody := request.Body
+	maxSize := config.MaxBodyDumpSize
 
-			reqBody = []byte("[read-error]")
-		} else {
-			reqBody = body
-			_ = request.Body.Close()
-			request.Body = io.NopCloser(bytes.NewBuffer(reqBody)) // reset original request body
+	var (
+		buf       []byte
+		err       error
+		truncated bool
+	)
+
+	if maxSize > 0 {
+		// Read one extra byte to detect truncation.
+		buf, err = io.ReadAll(io.LimitReader(origBody, maxSize+1))
+		if err == nil && int64(len(buf)) > maxSize {
+			truncated = true
+			dumped := buf[:maxSize]
+			// Hand the handler a stream of: already-read bytes + remaining body.
+			request.Body = teeReadCloser{
+				Reader: io.MultiReader(bytes.NewReader(buf), origBody),
+				Closer: origBody,
+			}
+			buf = dumped
+		} else if err == nil {
+			_ = origBody.Close()
+			request.Body = io.NopCloser(bytes.NewReader(buf))
+		}
+	} else {
+		buf, err = io.ReadAll(origBody)
+		if err == nil {
+			_ = origBody.Close()
+			request.Body = io.NopCloser(bytes.NewReader(buf))
 		}
 	}
 
-	setAttr(span, config, attribute.String("http.request.body", string(reqBody)))
+	if err != nil {
+		span.RecordError(err)
+		setAttr(span, config, attribute.String(attrRequestBody, bodyReadError))
+
+		return
+	}
+
+	body := strings.ToValidUTF8(string(buf), "")
+	if truncated {
+		body += bodyTruncated
+	}
+
+	setAttr(span, config, attribute.String(attrRequestBody, body))
 }
 
 // setupResponseDumper creates and sets up a response dumper.
@@ -142,13 +216,13 @@ func setupResponseDumper(c *echo.Context) *response.Dumper {
 
 // dumpReq processes the request for tracing, adding path parameters, headers, and body to the span.
 // It returns a response dumper if body dumping is enabled.
-func dumpReq(c *echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request, skipReqBody bool) *response.Dumper {
+func dumpReq(c *echo.Context, config OtelConfig, span oteltrace.Span, request *http.Request, skipReqBody, skipRespBody bool) *response.Dumper {
 	// Add path parameters
 	addPathParameters(c, config, span)
 
 	// Dump request headers
 	if config.AreHeadersDump {
-		setAttr(span, config, dumpHeaders("http.request.headers", request.Header)...)
+		setAttr(span, config, dumpHeaders("http.request.headers", request.Header, config.HeaderSkipper)...)
 	}
 
 	// Dump request & response body
@@ -158,41 +232,51 @@ func dumpReq(c *echo.Context, config OtelConfig, span oteltrace.Span, request *h
 		// Dump request body
 		dumpRequestBody(request, config, span, skipReqBody)
 
-		// Setup response dumper
-		respDumper = setupResponseDumper(c)
+		// Only install the response dumper if we plan to use it; otherwise the
+		// response is buffered for the full request lifetime for nothing.
+		if !skipRespBody {
+			respDumper = setupResponseDumper(c)
+		}
 	}
 
 	return respDumper
 }
 
-// setSpanStatus sets the span status based on the HTTP status code.
-func setSpanStatus(span oteltrace.Span, status int) {
+// setSpanStatus sets the span status based on the HTTP status code, attaching
+// a human-readable message for error statuses.
+func setSpanStatus(span oteltrace.Span, status int, err error) {
 	switch {
 	case status >= 400:
-		span.SetStatus(codes.Error, "")
+		msg := http.StatusText(status)
+		if err != nil {
+			msg = err.Error()
+		}
+
+		span.SetStatus(codes.Error, msg)
 	case status >= 200:
 		span.SetStatus(codes.Ok, "")
-	default:
-		span.SetStatus(codes.Unset, "")
 	}
 }
 
 // dumpResponseHeaders dumps the response headers to the span.
 func dumpResponseHeaders(c *echo.Context, config OtelConfig, span oteltrace.Span) {
 	if config.AreHeadersDump {
-		setAttr(span, config, dumpHeaders("http.response.headers", c.Response().Header())...)
+		setAttr(span, config, dumpHeaders("http.response.headers", c.Response().Header(), config.HeaderSkipper)...)
 	}
 }
 
-// dumpResponseBody dumps the response body to the span.
-func dumpResponseBody(respDumper *response.Dumper, config OtelConfig, span oteltrace.Span, skipRespBody bool) {
-	respBody := respDumper.GetResponse()
-
-	if skipRespBody {
-		respBody = "[excluded]"
+// dumpResponseBody dumps the response body to the span. Only called when a
+// response dumper was installed, which implies the body was not skipped.
+func dumpResponseBody(c *echo.Context, respDumper *response.Dumper, config OtelConfig, span oteltrace.Span) {
+	respBody := bodyNonText
+	if isTextualContentType(c.Response().Header().Get(echo.HeaderContentType)) {
+		respBody = strings.ToValidUTF8(respDumper.GetResponse(), "")
+		if config.MaxBodyDumpSize > 0 && int64(len(respBody)) > config.MaxBodyDumpSize {
+			respBody = respBody[:config.MaxBodyDumpSize] + bodyTruncated
+		}
 	}
 
-	setAttr(span, config, attribute.String("http.response.body", respBody))
+	setAttr(span, config, attribute.String(attrResponseBody, respBody))
 }
 
 // dumpResp processes the response for tracing, adding status, headers, and body to the span.
@@ -200,7 +284,7 @@ func dumpResp(c *echo.Context, config OtelConfig, span oteltrace.Span, respDumpe
 	status := responseStatus(c, respDumper, err)
 
 	// Set span status based on HTTP status code
-	setSpanStatus(span, status)
+	setSpanStatus(span, status, err)
 
 	// Add status code attribute if available
 	if status > 0 {
@@ -210,36 +294,69 @@ func dumpResp(c *echo.Context, config OtelConfig, span oteltrace.Span, respDumpe
 	// Dump response headers
 	dumpResponseHeaders(c, config, span)
 
-	// Dump response body
-	if config.IsBodyDump && respDumper != nil {
-		dumpResponseBody(respDumper, config, span, skipRespBody)
+	// Dump response body. When the response was skipped up-front we never
+	// installed a dumper, but still emit the marker attribute for parity with
+	// the request side.
+	if config.IsBodyDump {
+		switch {
+		case respDumper != nil:
+			dumpResponseBody(c, respDumper, config, span)
+		case skipRespBody:
+			setAttr(span, config, attribute.String(attrResponseBody, bodyExcluded))
+		}
 	}
 }
 
-// createSpanName creates a span name based on the HTTP method, path, and request URI.
+// createSpanName builds an OTel-conformant span name: "{METHOD} {route}".
+// Falls back to "HTTP {METHOD}" when the route is unknown (e.g. not matched
+// by the router). The raw request URI is never included to avoid leaking
+// query parameters and inflating cardinality.
 func createSpanName(request *http.Request, path string) string {
-	opName := "HTTP " + request.Method + " URL: " + path
-	if path != request.RequestURI {
-		opName = opName + " URI: " + request.RequestURI
+	if path == "" {
+		return "HTTP " + request.Method
 	}
 
-	return opName
+	return request.Method + " " + path
 }
 
-// createSpanOptions creates span options with common HTTP attributes.
+// createSpanOptions creates span options with common HTTP attributes using
+// current OpenTelemetry semantic conventions.
 func createSpanOptions(request *http.Request, realIP, requestID string) []oteltrace.SpanStartOption {
+	attrs := []attribute.KeyValue{
+		semconv.HTTPRequestMethodKey.String(request.Method),
+		semconv.URLScheme(request.URL.Scheme),
+		semconv.ServerAddress(request.Host),
+		semconv.UserAgentOriginal(request.UserAgent()),
+	}
+
+	if realIP != "" {
+		attrs = append(attrs, semconv.ClientAddress(realIP))
+	}
+
+	if requestID != "" {
+		attrs = append(attrs, attribute.String("http.request.id", requestID))
+	}
+
+	if name, version := splitProto(request.Proto); name != "" {
+		attrs = append(attrs, semconv.NetworkProtocolName(name))
+		if version != "" {
+			attrs = append(attrs, semconv.NetworkProtocolVersion(version))
+		}
+	}
+
 	return []oteltrace.SpanStartOption{
 		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
-		oteltrace.WithAttributes(
-			attribute.String("client_ip", realIP),
-			attribute.String("request_id", requestID),
-			attribute.String("user_agent", request.UserAgent()),
-			attribute.String("http.method", request.Method),
-			attribute.String("http.proto", request.Proto),
-			attribute.String("http.host", request.Host),
-			attribute.String("http.scheme", request.URL.Scheme),
-		),
+		oteltrace.WithAttributes(attrs...),
 	}
+}
+
+// splitProto splits e.g. "HTTP/1.1" into ("http", "1.1").
+func splitProto(proto string) (name, version string) {
+	if i := strings.Index(proto, "/"); i >= 0 {
+		return strings.ToLower(proto[:i]), proto[i+1:]
+	}
+
+	return strings.ToLower(proto), ""
 }
 
 // createSpan creates a new span for the request and returns the request, span, context, and a cleanup function.
@@ -249,6 +366,7 @@ func createSpan(c *echo.Context, config OtelConfig) (*http.Request, oteltrace.Sp
 
 	request := c.Request()
 	savedCtx := request.Context()
+	origResp := c.Response()
 
 	// Ensure request.URL is not nil
 	if request.URL == nil {
@@ -266,10 +384,12 @@ func createSpan(c *echo.Context, config OtelConfig) (*http.Request, oteltrace.Sp
 	opts := createSpanOptions(request, realIP, requestID)
 	ctx, span := tracer.Start(ctx, opName, opts...)
 
-	// Return cleanup function
+	// Return cleanup function: restore the original request/response so any
+	// outer middleware sees the values it handed us, then end the span.
 	return request, span, ctx, func() {
 		request = request.WithContext(savedCtx)
 		c.SetRequest(request)
+		c.SetResponse(origResp)
 		span.End()
 	}
 }
@@ -290,6 +410,14 @@ func setDefaultValues(config *OtelConfig) {
 	if config.BodySkipper == nil {
 		config.BodySkipper = defaultBodySkipper
 	}
+
+	if config.HeaderSkipper == nil {
+		config.HeaderSkipper = defaultHeaderSkipper
+	}
+
+	if config.MaxBodyDumpSize == 0 {
+		config.MaxBodyDumpSize = defaultMaxBodyDumpSize
+	}
 }
 
 func responseStatus(c *echo.Context, respDumper *response.Dumper, err error) int {
@@ -297,28 +425,53 @@ func responseStatus(c *echo.Context, respDumper *response.Dumper, err error) int
 		return respDumper.StatusCode()
 	}
 
-	resp, unwrapErr := echo.UnwrapResponse(c.Response())
-	if unwrapErr == nil && resp != nil {
-		return resp.Status
-	}
-
+	// On handler error the response has not yet been written (Echo's
+	// HTTPErrorHandler runs after this middleware returns), so prefer the
+	// error's HTTPStatusCoder. Generic errors map to 500.
 	if err != nil {
 		var hsc echo.HTTPStatusCoder
 		if errors.As(err, &hsc) {
 			return hsc.StatusCode()
 		}
+
+		return http.StatusInternalServerError
+	}
+
+	resp, unwrapErr := echo.UnwrapResponse(c.Response())
+	if unwrapErr == nil && resp != nil {
+		return resp.Status
 	}
 
 	return 0
 }
 
-func dumpHeaders(prefix string, h http.Header) []attribute.KeyValue {
+func dumpHeaders(prefix string, h http.Header, skip HeaderSkipper) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, len(h))
+
 	for k, v := range h {
+		if skip != nil && skip(k) {
+			attrs = append(attrs, formatKey(k, prefix).String("[redacted]"))
+			continue
+		}
+
 		attrs = append(attrs, formatKey(k, prefix).StringSlice(v))
 	}
 
 	return attrs
+}
+
+// recordPanic attaches a recovered panic value to the span as an error event
+// and sets the span status to Error.
+func recordPanic(span oteltrace.Span, r any) {
+	var err error
+	if e, ok := r.(error); ok {
+		err = e
+	} else {
+		err = fmt.Errorf("panic: %v", r)
+	}
+
+	span.RecordError(err, oteltrace.WithStackTrace(true))
+	span.SetStatus(codes.Error, err.Error())
 }
 
 // Middleware returns a OpenTelemetry middleware with default config
@@ -342,16 +495,20 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			request, span, ctx, endSpan := createSpan(c, config)
 			defer endSpan()
 
+			// Record panics on the span and re-panic so upstream recovery
+			// middleware (Echo's Recover, etc.) still works.
+			defer func() {
+				if r := recover(); r != nil {
+					recordPanic(span, r)
+					panic(r)
+				}
+			}()
+
 			// Skip attribute/body/header processing if span is not recording.
 			if !span.IsRecording() {
 				c.SetRequest(request.WithContext(ctx))
 
-				err := next(c)
-				if err != nil {
-					invokeErrorHandler(c, err)
-				}
-
-				return err
+				return next(c)
 			}
 
 			// Determine if request/response bodies should be skipped
@@ -363,7 +520,7 @@ func MiddlewareWithConfig(config OtelConfig) echo.MiddlewareFunc {
 			}
 
 			// Process request for tracing
-			respDumper := dumpReq(c, config, span, request, skipReqBody)
+			respDumper := dumpReq(c, config, span, request, skipReqBody, skipRespBody)
 
 			// Setup request context with the span
 			c.SetRequest(request.WithContext(ctx))
