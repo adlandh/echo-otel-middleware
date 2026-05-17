@@ -195,7 +195,7 @@ func TestDefaultBodySkipper(t *testing.T) {
 	})
 
 	t.Run("textual content type", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
 		r.Header.Set(echo.HeaderContentType, "application/json")
 		c := e.NewContext(r, httptest.NewRecorder())
 		skipReq, skipResp := defaultBodySkipper(c)
@@ -204,7 +204,7 @@ func TestDefaultBodySkipper(t *testing.T) {
 	})
 
 	t.Run("binary content type is skipped", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
 		r.Header.Set(echo.HeaderContentType, "multipart/form-data; boundary=x")
 		c := e.NewContext(r, httptest.NewRecorder())
 		skipReq, skipResp := defaultBodySkipper(c)
@@ -213,7 +213,7 @@ func TestDefaultBodySkipper(t *testing.T) {
 	})
 
 	t.Run("missing content type is skipped", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
 		c := e.NewContext(r, httptest.NewRecorder())
 		skipReq, skipResp := defaultBodySkipper(c)
 		require.True(t, skipReq)

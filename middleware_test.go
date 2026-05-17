@@ -306,7 +306,7 @@ func TestCreateSpanName(t *testing.T) {
 	})
 
 	t.Run("no route falls back to method", func(t *testing.T) {
-		r := httptest.NewRequest("POST", "/anything", nil)
+		r := httptest.NewRequest("POST", "/anything", http.NoBody)
 		assert.Equal(t, "HTTP POST", createSpanName(r, ""))
 	})
 }
@@ -734,7 +734,7 @@ func TestSensitiveHeadersRedacted(t *testing.T) {
 		return c.String(http.StatusOK, userID)
 	})
 
-	r := httptest.NewRequest("GET", userURL, nil)
+	r := httptest.NewRequest("GET", userURL, http.NoBody)
 	r.Header.Set("Authorization", "Bearer secret-token")
 	r.Header.Set("Cookie", "session=abc")
 	r.Header.Set("X-Trace-Flavor", "vanilla")
@@ -772,7 +772,7 @@ func TestCustomHeaderSkipper(t *testing.T) {
 		return c.String(http.StatusOK, userID)
 	})
 
-	r := httptest.NewRequest("GET", userURL, nil)
+	r := httptest.NewRequest("GET", userURL, http.NoBody)
 	r.Header.Set("X-Internal", "shh")
 	r.Header.Set("Authorization", "Bearer leak-me") // not in custom skipper, but not redacted either
 	w := httptest.NewRecorder()
@@ -794,7 +794,7 @@ func TestPanicIsRecordedAndPropagated(t *testing.T) {
 		panic("kaboom")
 	})
 
-	r := httptest.NewRequest("GET", "/boom", nil)
+	r := httptest.NewRequest("GET", "/boom", http.NoBody)
 	w := httptest.NewRecorder()
 
 	require.Panics(t, func() {
