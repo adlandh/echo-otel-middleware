@@ -77,6 +77,16 @@ type (
 
 const defaultMaxBodyDumpSize int64 = 64 * 1024
 
+// Attribute keys and marker values shared by request/response body dumps.
+const (
+	attrRequestBody  = "http.request.body"
+	attrResponseBody = "http.response.body"
+	bodyExcluded     = "[excluded]"
+	bodyReadError    = "[read-error]"
+	bodyTruncated    = "[truncated]"
+	bodyNonText      = "[non-text content]"
+)
+
 var (
 	// DefaultOtelConfig is the default OpenTelemetry middleware config.
 	DefaultOtelConfig = OtelConfig{
@@ -144,7 +154,7 @@ func dumpRequestBody(request *http.Request, config OtelConfig, span oteltrace.Sp
 	}
 
 	if skipReqBody {
-		setAttr(span, config, attribute.String("http.request.body", "[excluded]"))
+		setAttr(span, config, attribute.String(attrRequestBody, bodyExcluded))
 		return
 	}
 
@@ -183,17 +193,17 @@ func dumpRequestBody(request *http.Request, config OtelConfig, span oteltrace.Sp
 
 	if err != nil {
 		span.RecordError(err)
-		setAttr(span, config, attribute.String("http.request.body", "[read-error]"))
+		setAttr(span, config, attribute.String(attrRequestBody, bodyReadError))
 
 		return
 	}
 
 	body := strings.ToValidUTF8(string(buf), "")
 	if truncated {
-		body += "[truncated]"
+		body += bodyTruncated
 	}
 
-	setAttr(span, config, attribute.String("http.request.body", body))
+	setAttr(span, config, attribute.String(attrRequestBody, body))
 }
 
 // setupResponseDumper creates and sets up a response dumper.
@@ -261,17 +271,17 @@ func dumpResponseBody(c *echo.Context, respDumper *response.Dumper, config OtelC
 
 	switch {
 	case skipRespBody:
-		respBody = "[excluded]"
+		respBody = bodyExcluded
 	case !isTextualContentType(c.Response().Header().Get(echo.HeaderContentType)):
-		respBody = "[non-text content]"
+		respBody = bodyNonText
 	default:
 		respBody = strings.ToValidUTF8(respDumper.GetResponse(), "")
 		if config.MaxBodyDumpSize > 0 && int64(len(respBody)) > config.MaxBodyDumpSize {
-			respBody = respBody[:config.MaxBodyDumpSize] + "[truncated]"
+			respBody = respBody[:config.MaxBodyDumpSize] + bodyTruncated
 		}
 	}
 
-	setAttr(span, config, attribute.String("http.response.body", respBody))
+	setAttr(span, config, attribute.String(attrResponseBody, respBody))
 }
 
 // dumpResp processes the response for tracing, adding status, headers, and body to the span.
@@ -297,7 +307,7 @@ func dumpResp(c *echo.Context, config OtelConfig, span oteltrace.Span, respDumpe
 		case respDumper != nil:
 			dumpResponseBody(c, respDumper, config, span, skipRespBody)
 		case skipRespBody:
-			setAttr(span, config, attribute.String("http.response.body", "[excluded]"))
+			setAttr(span, config, attribute.String(attrResponseBody, bodyExcluded))
 		}
 	}
 }

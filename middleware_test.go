@@ -838,6 +838,162 @@ func TestResponseRestoredAfterMiddleware(t *testing.T) {
 	assert.Same(t, origResp, c.Response(), "outer middleware should observe the original *echo.Response after the otel middleware returns")
 }
 
+func TestRequestBodyTruncated(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	var seenByHandler string
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{
+		TracerProvider:  provider,
+		IsBodyDump:      true,
+		MaxBodyDumpSize: 5,
+	}))
+	router.POST("/x", func(c *echo.Context) error {
+		b, err := io.ReadAll(c.Request().Body)
+		require.NoError(t, err)
+		seenByHandler = string(b)
+		return c.String(http.StatusOK, "ok")
+	})
+
+	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("hello world"))
+	r.Header.Set(echo.HeaderContentType, "text/plain")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	assert.Equal(t, "hello world", seenByHandler, "handler should still see the full body")
+
+	attrs := sr.Ended()[0].Attributes()
+	assert.Contains(t, attrs, attribute.String("http.request.body", "hello[truncated]"))
+}
+
+func TestRequestBodyUnlimited(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{
+		TracerProvider:  provider,
+		IsBodyDump:      true,
+		MaxBodyDumpSize: -1,
+	}))
+	router.POST("/x", func(c *echo.Context) error {
+		_, _ = io.ReadAll(c.Request().Body)
+		return c.String(http.StatusOK, "ok")
+	})
+
+	body := strings.Repeat("a", 200*1024)
+	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body))
+	r.Header.Set(echo.HeaderContentType, "text/plain")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	attrs := sr.Ended()[0].Attributes()
+
+	var got string
+
+	for _, a := range attrs {
+		if a.Key == "http.request.body" {
+			got = a.Value.AsString()
+		}
+	}
+
+	assert.Equal(t, body, got)
+	assert.NotContains(t, got, "[truncated]")
+}
+
+func TestResponseBodyNonText(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{
+		TracerProvider: provider,
+		IsBodyDump:     true,
+	}))
+	router.GET("/img", func(c *echo.Context) error {
+		return c.Blob(http.StatusOK, "image/png", []byte{0x89, 0x50, 0x4e, 0x47})
+	})
+
+	r := httptest.NewRequest("GET", "/img", http.NoBody)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	attrs := sr.Ended()[0].Attributes()
+	assert.Contains(t, attrs, attribute.String("http.response.body", "[non-text content]"))
+}
+
+func TestResponseBodyTruncated(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{
+		TracerProvider:  provider,
+		IsBodyDump:      true,
+		MaxBodyDumpSize: 4,
+	}))
+	router.GET("/x", func(c *echo.Context) error {
+		return c.String(http.StatusOK, "abcdefghij")
+	})
+
+	r := httptest.NewRequest("GET", "/x", http.NoBody)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	attrs := sr.Ended()[0].Attributes()
+	assert.Contains(t, attrs, attribute.String("http.response.body", "abcd[truncated]"))
+}
+
+func TestSplitProto(t *testing.T) {
+	t.Run("http/1.1", func(t *testing.T) {
+		name, version := splitProto("HTTP/1.1")
+		assert.Equal(t, "http", name)
+		assert.Equal(t, "1.1", version)
+	})
+
+	t.Run("no slash", func(t *testing.T) {
+		name, version := splitProto("HTTP")
+		assert.Equal(t, "http", name)
+		assert.Equal(t, "", version)
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		name, version := splitProto("")
+		assert.Equal(t, "", name)
+		assert.Equal(t, "", version)
+	})
+}
+
+func TestRecordPanicWithErrorValue(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider}))
+	router.GET("/boom", func(_ *echo.Context) error {
+		panic(errors.New("kaboom-as-error"))
+	})
+
+	r := httptest.NewRequest("GET", "/boom", http.NoBody)
+	w := httptest.NewRecorder()
+
+	require.Panics(t, func() {
+		router.ServeHTTP(w, r)
+	})
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, codes.Error, spans[0].Status().Code)
+	assert.Contains(t, spans[0].Status().Description, "kaboom-as-error")
+}
+
+func TestIsTextualContentTypeXMLSuffix(t *testing.T) {
+	assert.True(t, isTextualContentType("application/atom+xml"))
+	assert.True(t, isTextualContentType("application/vnd.api+json"))
+}
+
 func BenchmarkWithMiddleware(b *testing.B) {
 	router := echo.New()
 	router.Use(Middleware())
