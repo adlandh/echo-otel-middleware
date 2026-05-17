@@ -29,9 +29,9 @@ const (
 	userEndpoint = "/user/:id"
 	userURL      = "/user/" + userID
 	defaultHost  = "example.com"
-	hostNameTag  = "http.host"
+	hostNameTag  = "server.address"
 	statusTag    = "http.response.status_code"
-	methodTag    = "http.method"
+	methodTag    = "http.request.method"
 	routeTag     = "http.route"
 )
 
@@ -205,7 +205,7 @@ func TestTrace200(t *testing.T) {
 	spans := sr.Ended()
 	require.Len(t, spans, 1)
 	span := spans[0]
-	assert.Equal(t, "HTTP GET URL: "+userEndpoint+" URI: "+userURL, span.Name())
+	assert.Equal(t, "GET "+userEndpoint, span.Name())
 	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
 	attrs := span.Attributes()
 	assert.Contains(t, attrs, attribute.String(hostNameTag, defaultHost))
@@ -226,7 +226,7 @@ func TestTrace200WithHeadersAndBody(t *testing.T) {
 	})
 
 	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
-	r.Header.Set(echo.HeaderContentType, "plain/text")
+	r.Header.Set(echo.HeaderContentType, "text/plain")
 	w := httptest.NewRecorder()
 
 	// do and verify the request
@@ -242,7 +242,7 @@ func TestTrace200WithHeadersAndBody(t *testing.T) {
 	spans := sr.Ended()
 	require.Len(t, spans, 1)
 	span := spans[0]
-	assert.Equal(t, "HTTP GET URL: /user/:id URI: /user/123", span.Name())
+	assert.Equal(t, "GET /user/:id", span.Name())
 	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
 	attrs := span.Attributes()
 	assert.Contains(t, attrs, attribute.String(hostNameTag, defaultHost))
@@ -251,7 +251,7 @@ func TestTrace200WithHeadersAndBody(t *testing.T) {
 	assert.Contains(t, attrs, attribute.String(routeTag, userEndpoint))
 	assert.Contains(t, attrs, attribute.String("http.request.body", "test"))
 	assert.Contains(t, attrs, attribute.String("http.response.body", userID))
-	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.content_type", []string{"plain/text"}))
+	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.content_type", []string{"text/plain"}))
 }
 
 func TestTrace200WithHeadersAndBodySkipped(t *testing.T) {
@@ -266,7 +266,7 @@ func TestTrace200WithHeadersAndBodySkipped(t *testing.T) {
 	})
 
 	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
-	r.Header.Set(echo.HeaderContentType, "plain/text")
+	r.Header.Set(echo.HeaderContentType, "text/plain")
 	w := httptest.NewRecorder()
 
 	// do and verify the request
@@ -282,7 +282,7 @@ func TestTrace200WithHeadersAndBodySkipped(t *testing.T) {
 	spans := sr.Ended()
 	require.Len(t, spans, 1)
 	span := spans[0]
-	assert.Equal(t, "HTTP GET URL: /user/:id URI: /user/123", span.Name())
+	assert.Equal(t, "GET /user/:id", span.Name())
 	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
 	attrs := span.Attributes()
 	assert.Contains(t, attrs, attribute.String(hostNameTag, defaultHost))
@@ -291,18 +291,23 @@ func TestTrace200WithHeadersAndBodySkipped(t *testing.T) {
 	assert.Contains(t, attrs, attribute.String(routeTag, userEndpoint))
 	assert.Contains(t, attrs, attribute.String("http.request.body", "[excluded]"))
 	assert.Contains(t, attrs, attribute.String("http.response.body", "[excluded]"))
-	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.content_type", []string{"plain/text"}))
+	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.content_type", []string{"text/plain"}))
 }
 
 func TestCreateSpanName(t *testing.T) {
-	t.Run("same path and uri", func(t *testing.T) {
+	t.Run("with route", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "/ping", nil)
-		assert.Equal(t, "HTTP GET URL: /ping", createSpanName(r, "/ping"))
+		assert.Equal(t, "GET /ping", createSpanName(r, "/ping"))
 	})
 
-	t.Run("different path and uri", func(t *testing.T) {
+	t.Run("route differs from URI - URI not leaked", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "/user/123?active=true", nil)
-		assert.Equal(t, "HTTP GET URL: /user/:id URI: /user/123?active=true", createSpanName(r, "/user/:id"))
+		assert.Equal(t, "GET /user/:id", createSpanName(r, "/user/:id"))
+	})
+
+	t.Run("no route falls back to method", func(t *testing.T) {
+		r := httptest.NewRequest("POST", "/anything", nil)
+		assert.Equal(t, "HTTP POST", createSpanName(r, ""))
 	})
 }
 
@@ -339,7 +344,7 @@ func TestSetSpanStatus(t *testing.T) {
 			tracer := provider.Tracer(tracerName)
 
 			_, span := tracer.Start(context.Background(), "test")
-			setSpanStatus(span, tc.statusCode)
+			setSpanStatus(span, tc.statusCode, nil)
 			span.End()
 
 			spans := sr.Ended()
@@ -391,7 +396,7 @@ func TestHeadersDumpDisabled(t *testing.T) {
 	})
 
 	r := httptest.NewRequest("GET", userURL, strings.NewReader("test"))
-	r.Header.Set(echo.HeaderContentType, "plain/text")
+	r.Header.Set(echo.HeaderContentType, "text/plain")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
 
@@ -477,7 +482,7 @@ func TestError(t *testing.T) {
 	spans := sr.Ended()
 	require.Len(t, spans, 1)
 	span := spans[0]
-	assert.Equal(t, "HTTP GET URL: /server_err", span.Name())
+	assert.Equal(t, "GET /server_err", span.Name())
 	attrs := span.Attributes()
 	assert.Contains(t, attrs, attribute.String(hostNameTag, defaultHost))
 	assert.Contains(t, attrs, attribute.Int(statusTag, http.StatusInternalServerError))
@@ -536,7 +541,7 @@ func TestStatusError(t *testing.T) {
 			spans := sr.Ended()
 			require.Len(t, spans, 1)
 			span := spans[0]
-			assert.Equal(t, "HTTP GET URL: /err", span.Name())
+			assert.Equal(t, "GET /err", span.Name())
 			assert.Equal(t, tc.spanCode, span.Status().Code)
 
 			attrs := span.Attributes()
@@ -695,6 +700,7 @@ func TestDumpRequestBodyReadError(t *testing.T) {
 	})
 
 	r := httptest.NewRequest("GET", userURL, http.NoBody)
+	r.Header.Set(echo.HeaderContentType, "text/plain")
 	r.Body = failingReader{}
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
@@ -716,6 +722,120 @@ func TestDumpRequestBodyReadError(t *testing.T) {
 	}
 
 	assert.True(t, found, "expected an exception event for the read error")
+}
+
+func TestSensitiveHeadersRedacted(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider, AreHeadersDump: true}))
+	router.GET(userEndpoint, func(c *echo.Context) error {
+		return c.String(http.StatusOK, userID)
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	r.Header.Set("Authorization", "Bearer secret-token")
+	r.Header.Set("Cookie", "session=abc")
+	r.Header.Set("X-Trace-Flavor", "vanilla")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	attrs := spans[0].Attributes()
+
+	assert.Contains(t, attrs, attribute.String("http.request.headers.authorization", "[redacted]"))
+	assert.Contains(t, attrs, attribute.String("http.request.headers.cookie", "[redacted]"))
+	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.x_trace_flavor", []string{"vanilla"}))
+
+	for _, attr := range attrs {
+		if attr.Key == "http.request.headers.authorization" {
+			assert.NotContains(t, attr.Value.AsString(), "secret-token")
+		}
+	}
+}
+
+func TestCustomHeaderSkipper(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{
+		TracerProvider: provider,
+		AreHeadersDump: true,
+		HeaderSkipper: func(name string) bool {
+			return strings.EqualFold(name, "X-Internal")
+		},
+	}))
+	router.GET(userEndpoint, func(c *echo.Context) error {
+		return c.String(http.StatusOK, userID)
+	})
+
+	r := httptest.NewRequest("GET", userURL, nil)
+	r.Header.Set("X-Internal", "shh")
+	r.Header.Set("Authorization", "Bearer leak-me") // not in custom skipper, but not redacted either
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	attrs := sr.Ended()[0].Attributes()
+	assert.Contains(t, attrs, attribute.String("http.request.headers.x_internal", "[redacted]"))
+	// Custom skipper fully replaces the default; Authorization is not redacted here.
+	assert.Contains(t, attrs, attribute.StringSlice("http.request.headers.authorization", []string{"Bearer leak-me"}))
+}
+
+func TestPanicIsRecordedAndPropagated(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	router := echo.New()
+	router.Use(MiddlewareWithConfig(OtelConfig{TracerProvider: provider}))
+	router.GET("/boom", func(_ *echo.Context) error {
+		panic("kaboom")
+	})
+
+	r := httptest.NewRequest("GET", "/boom", nil)
+	w := httptest.NewRecorder()
+
+	require.Panics(t, func() {
+		router.ServeHTTP(w, r)
+	})
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	span := spans[0]
+	assert.Equal(t, codes.Error, span.Status().Code)
+
+	var foundException bool
+
+	for _, ev := range span.Events() {
+		if ev.Name == "exception" {
+			foundException = true
+			break
+		}
+	}
+
+	assert.True(t, foundException, "expected an exception event for the panic")
+}
+
+func TestResponseRestoredAfterMiddleware(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	e := echo.New()
+	r := httptest.NewRequest("GET", "/x", strings.NewReader("hello"))
+	r.Header.Set(echo.HeaderContentType, "text/plain")
+	w := httptest.NewRecorder()
+	c := e.NewContext(r, w)
+
+	origResp := c.Response()
+
+	h := MiddlewareWithConfig(OtelConfig{TracerProvider: provider, IsBodyDump: true})(func(c *echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+	require.NoError(t, h(c))
+
+	assert.Same(t, origResp, c.Response(), "outer middleware should observe the original *echo.Response after the otel middleware returns")
 }
 
 func BenchmarkWithMiddleware(b *testing.B) {

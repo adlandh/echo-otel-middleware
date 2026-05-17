@@ -23,14 +23,12 @@ func limitString(str string, size int) string {
 		return str
 	}
 
-	bytes := []byte(str)
-
-	validBytes := bytes[:size]
-	for !utf8.Valid(validBytes) {
-		validBytes = validBytes[:len(validBytes)-1]
+	// Walk back at most 3 bytes to the nearest rune start. No allocation.
+	for size > 0 && !utf8.RuneStart(str[size]) {
+		size--
 	}
 
-	return string(validBytes)
+	return str[:size]
 }
 
 // limitStringWithDots limits the given string to the given size (in bytes).
@@ -145,16 +143,89 @@ func prepareAttrs(config OtelConfig, attrs ...attribute.KeyValue) []attribute.Ke
 	return attrs
 }
 
-// formatKey formats a key for use as an attribute key.
-// It converts the key to lowercase, replaces hyphens with underscores,
-// and adds a prefix.
+// formatKey formats a header name as an attribute key: "{prefix}.{lowercase
+// name with - replaced by _}". Done in a single pass to avoid the intermediate
+// allocations of strings.ToLower + strings.ReplaceAll + concatenation.
 func formatKey(k, prefix string) attribute.Key {
-	k = strings.ToLower(k)
-	k = strings.ReplaceAll(k, "-", "_")
+	var b strings.Builder
 
-	return attribute.Key(prefix + "." + k)
+	b.Grow(len(prefix) + 1 + len(k))
+	b.WriteString(prefix)
+	b.WriteByte('.')
+
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		switch {
+		case c >= 'A' && c <= 'Z':
+			b.WriteByte(c + ('a' - 'A'))
+		case c == '-':
+			b.WriteByte('_')
+		default:
+			b.WriteByte(c)
+		}
+	}
+
+	return attribute.Key(b.String())
 }
 
-func defaultBodySkipper(_ *echo.Context) (skipReqBody bool, skipRespBody bool) {
+// isTextualContentType reports whether the given Content-Type header value
+// refers to a textual payload safe to attach to a span attribute.
+func isTextualContentType(ct string) bool {
+	if ct == "" {
+		return false
+	}
+
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+
+	ct = strings.TrimSpace(strings.ToLower(ct))
+
+	if strings.HasPrefix(ct, "text/") {
+		return true
+	}
+
+	if strings.HasSuffix(ct, "+json") || strings.HasSuffix(ct, "+xml") {
+		return true
+	}
+
+	switch ct {
+	case "application/json",
+		"application/xml",
+		"application/x-www-form-urlencoded",
+		"application/graphql",
+		"application/javascript",
+		"application/ld+json":
+		return true
+	}
+
+	return false
+}
+
+// defaultHeaderSkipper denies common authentication/cookie headers so
+// credentials are not sent to the tracing backend.
+func defaultHeaderSkipper(name string) bool {
+	switch strings.ToLower(name) {
+	case "authorization",
+		"cookie",
+		"set-cookie",
+		"proxy-authorization",
+		"x-api-key":
+		return true
+	}
+
+	return false
+}
+
+// defaultBodySkipper skips request body capture for non-textual content types
+// (multipart, octet-stream, binary uploads). Response body capture is decided
+// after the handler runs based on the response Content-Type.
+func defaultBodySkipper(c *echo.Context) (skipReqBody bool, skipRespBody bool) {
+	if c == nil || c.Request() == nil {
+		return
+	}
+
+	skipReqBody = !isTextualContentType(c.Request().Header.Get(echo.HeaderContentType))
+
 	return
 }
