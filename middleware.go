@@ -207,8 +207,8 @@ func dumpRequestBody(request *http.Request, config OtelConfig, span oteltrace.Sp
 }
 
 // setupResponseDumper creates and sets up a response dumper.
-func setupResponseDumper(c *echo.Context) *response.Dumper {
-	respDumper := response.NewDumper(c.Response())
+func setupResponseDumper(c *echo.Context, limitSize int) *response.Dumper {
+	respDumper := response.NewDumper(c.Response(), response.WithMaxBytes(limitSize))
 	c.SetResponse(respDumper)
 
 	return respDumper
@@ -235,7 +235,7 @@ func dumpReq(c *echo.Context, config OtelConfig, span oteltrace.Span, request *h
 		// Only install the response dumper if we plan to use it; otherwise the
 		// response is buffered for the full request lifetime for nothing.
 		if !skipRespBody {
-			respDumper = setupResponseDumper(c)
+			respDumper = setupResponseDumper(c, config.LimitValueSize)
 		}
 	}
 
