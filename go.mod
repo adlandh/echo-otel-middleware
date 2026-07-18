@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/adlandh/response-dumper v1.3.0
-	github.com/labstack/echo/v5 v5.2.1
+	github.com/labstack/echo/v5 v5.3.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/propagators/b3 v1.44.0
 	go.opentelemetry.io/otel v1.44.0
@@ -22,6 +22,6 @@ require (
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/time v0.14.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
