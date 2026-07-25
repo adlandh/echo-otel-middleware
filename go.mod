@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/adlandh/response-dumper v1.3.0
-	github.com/labstack/echo/v5 v5.3.0
+	github.com/labstack/echo/v5 v5.3.1
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/propagators/b3 v1.44.0
 	go.opentelemetry.io/otel v1.44.0
