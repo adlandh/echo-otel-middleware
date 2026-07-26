@@ -927,6 +927,7 @@ func TestResponseBodyNonText(t *testing.T) {
 func TestResponseBodyTruncated(t *testing.T) {
 	sr := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	var buffered int
 
 	router := echo.New()
 	router.Use(MiddlewareWithConfig(OtelConfig{
@@ -935,12 +936,22 @@ func TestResponseBodyTruncated(t *testing.T) {
 		MaxBodyDumpSize: 4,
 	}))
 	router.GET("/x", func(c *echo.Context) error {
-		return c.String(http.StatusOK, "abcdefghij")
+		err := c.String(http.StatusOK, "abcdefghij")
+		require.NoError(t, err)
+
+		dumper, ok := c.Response().(interface{ Body() []byte })
+		require.True(t, ok)
+		buffered = len(dumper.Body())
+
+		return nil
 	})
 
 	r := httptest.NewRequest("GET", "/x", http.NoBody)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, r)
+
+	assert.Equal(t, 4, buffered)
+	assert.Equal(t, "abcdefghij", w.Body.String())
 
 	attrs := sr.Ended()[0].Attributes()
 	assert.Contains(t, attrs, attribute.String("http.response.body", "abcd[truncated]"))
