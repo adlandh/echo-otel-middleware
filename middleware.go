@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -207,8 +208,13 @@ func dumpRequestBody(request *http.Request, config OtelConfig, span oteltrace.Sp
 }
 
 // setupResponseDumper creates and sets up a response dumper.
-func setupResponseDumper(c *echo.Context, limitSize int) *response.Dumper {
-	respDumper := response.NewDumper(c.Response(), response.WithMaxBytes(limitSize))
+func setupResponseDumper(c *echo.Context, maxBodyDumpSize int64) *response.Dumper {
+	maxBytes := 0
+	if maxBodyDumpSize > 0 {
+		maxBytes = int(min(maxBodyDumpSize, math.MaxInt))
+	}
+
+	respDumper := response.NewDumper(c.Response(), response.WithMaxBytes(maxBytes))
 	c.SetResponse(respDumper)
 
 	return respDumper
@@ -235,7 +241,7 @@ func dumpReq(c *echo.Context, config OtelConfig, span oteltrace.Span, request *h
 		// Only install the response dumper if we plan to use it; otherwise the
 		// response is buffered for the full request lifetime for nothing.
 		if !skipRespBody {
-			respDumper = setupResponseDumper(c, config.LimitValueSize)
+			respDumper = setupResponseDumper(c, config.MaxBodyDumpSize)
 		}
 	}
 
@@ -271,8 +277,8 @@ func dumpResponseBody(c *echo.Context, respDumper *response.Dumper, config OtelC
 	respBody := bodyNonText
 	if isTextualContentType(c.Response().Header().Get(echo.HeaderContentType)) {
 		respBody = strings.ToValidUTF8(respDumper.GetResponse(), "")
-		if config.MaxBodyDumpSize > 0 && int64(len(respBody)) > config.MaxBodyDumpSize {
-			respBody = respBody[:config.MaxBodyDumpSize] + bodyTruncated
+		if respDumper.BytesWritten() > len(respDumper.Body()) {
+			respBody += bodyTruncated
 		}
 	}
 
