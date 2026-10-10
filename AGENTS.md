@@ -18,7 +18,7 @@ Single-package Echo OpenTelemetry middleware. Start with `middleware.go`, `helpe
 
 ## Tooling Gotchas
 
-- `go.mod` declares Go `1.25.0`; CI installs Go `1.25`.
+- `go.mod` declares Go `1.26.0`; CI installs Go `1.26`.
 - `.lefthook.yml` and CI lint download `.golangci.yml` from `adlandh/golangci-lint-config` before running lint. Do not rely on local edits to `.golangci.yml`; upstream the shared config instead.
 - Current lint config sets `run.tests: false`, so `*_test.go` files are not linted.
 
